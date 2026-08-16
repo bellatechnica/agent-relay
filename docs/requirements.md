@@ -77,8 +77,10 @@ slug's inbox, reply to a message, and acknowledge a processed message.
 
 ## Handoff integration
 
-The `handoff` skill must support Agent Relay as an alternative communication
-channel to `tmux-message`.
+The `handoff` skill must use Agent Relay as its default and exclusive
+inter-session communication channel. It uses `tmux-message` only when the user
+explicitly requests tmux mode. This rule governs communication after launch;
+the skill may still use tmux to create and host a local agent window.
 
 When the relay channel is selected, the spawning session must:
 
@@ -93,10 +95,11 @@ When the relay channel is selected, the spawning session must:
    signals, and completion reports that would otherwise travel through
    `tmux-message`.
 
-Selecting the relay channel must not remove the existing `tmux-message` path.
-The user may request either channel explicitly; relay is also the appropriate
-choice when the sessions do not share a reachable tmux server, including a
-Docker Sandbox boundary.
+The existing `tmux-message` path remains available as an explicit user-selected
+mode. A handoff must not silently fall back to tmux when relay registration or
+connectivity fails; it must report the relay blocker and obtain the user's
+direction. Relay remains usable when the sessions do not share a reachable tmux
+server, including across a Docker Sandbox boundary.
 
 ## Delivery and wake-up boundary
 
