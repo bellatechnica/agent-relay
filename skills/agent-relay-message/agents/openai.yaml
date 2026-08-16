@@ -1,0 +1,9 @@
+interface:
+  display_name: "Agent Relay Message"
+  short_description: "Message coding-agent sessions through Agent Relay"
+  default_prompt: "Use $agent-relay-message to send a message to another coding-agent slug."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "agent_relay"
+      description: "Durable slug-addressed coding-agent message relay"

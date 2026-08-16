@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "agent-relay": {
+      "type": "http",
+      "url": "http://host.docker.internal:8787/mcp",
+      "headers": {
+        "Authorization": "Bearer ${AGENT_RELAY_TOKEN}"
+      }
+    }
+  }
+}

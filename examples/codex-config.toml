@@ -1,0 +1,6 @@
+web_search = "live"
+
+[mcp_servers.agent_relay]
+url = "http://host.docker.internal:8787/mcp"
+bearer_token_env_var = "AGENT_RELAY_TOKEN"
+required = true

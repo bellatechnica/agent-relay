@@ -1,0 +1,17 @@
+# Managed by Agent Relay's install-user-service script.
+[Unit]
+Description=Agent Relay durable messaging service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=@PROJECT_DIR@
+Environment=PATH=@ENV_BIN@:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONNOUSERSITE=1
+EnvironmentFile=%h/.config/agent-relay/service.env
+ExecStart=@RELAY_BIN@ --host 127.0.0.1 --port 8787 --database-path %h/.local/state/agent-relay/relay.sqlite3
+Restart=on-failure
+UMask=0077
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+template_path="$project_dir/scripts/agent-relay.service.in"
+keepalive_source="$project_dir/scripts/wsl-keepalive.vbs"
+config_home=${XDG_CONFIG_HOME:-"$HOME/.config"}
+state_home=${XDG_STATE_HOME:-"$HOME/.local/state"}
+service_config_dir="$config_home/agent-relay"
+unit_dir="$config_home/systemd/user"
+environment_path="$service_config_dir/service.env"
+unit_path="$unit_dir/agent-relay.service"
+wants_dir="$unit_dir/default.target.wants"
+wants_path="$wants_dir/agent-relay.service"
+linger_path="/var/lib/systemd/linger/$USER"
+
+windows_appdata=$(cmd.exe /c 'echo %APPDATA%' 2>/dev/null | tr -d '\r')
+windows_startup_dir=$(wslpath "$windows_appdata")/Microsoft/Windows/Start\ Menu/Programs/Startup
+keepalive_path="$windows_startup_dir/wsl-keepalive.vbs"
+
+managed_paths=(
+    "$environment_path"
+    "$unit_path"
+    "$wants_path"
+    "$linger_path"
+    "$keepalive_path"
+)
+
+count_present() {
+    local count=0
+    local path
+    for path in "${managed_paths[@]}"; do
+        if [[ -e "$path" || -L "$path" ]]; then
+            ((count += 1))
+        fi
+    done
+    printf '%s' "$count"
+}
+
+printf 'project=%s\n' "$project_dir"
+printf 'service_unit=%s\n' "$unit_path"
+printf 'service_environment=%s\n' "$environment_path"
+printf 'persistent_database=%s\n' "$state_home/agent-relay/relay.sqlite3"
+printf 'windows_keepalive=%s\n' "$keepalive_path"
+printf 'managed_artifacts_before=%s expected_after=%s\n' \
+    "$(count_present)" "${#managed_paths[@]}"
+
+if [[ ${1:-} != "--execute" ]]; then
+    printf 'dry_run=true; rerun with --execute to install and enable the service\n'
+    exit 0
+fi
+if [[ $# -ne 1 ]]; then
+    printf 'usage: %s [--execute]\n' "$0" >&2
+    exit 2
+fi
+
+relay_bin=$(direnv exec "$project_dir" which agent-relay)
+env_bin=$(dirname -- "$relay_bin")
+mkdir -p "$service_config_dir" "$state_home/agent-relay" "$unit_dir" "$wants_dir" "$windows_startup_dir"
+
+if [[ ! -e "$environment_path" ]]; then
+    temporary_environment=$(mktemp "$service_config_dir/service.env.XXXXXX")
+    chmod 600 "$temporary_environment"
+    admin_token=$(openssl rand -hex 32)
+    printf 'AGENT_RELAY_ADMIN_TOKEN=%s\n' "$admin_token" > "$temporary_environment"
+    mv "$temporary_environment" "$environment_path"
+fi
+chmod 600 "$environment_path"
+
+if [[ -e "$unit_path" ]] && ! grep -Fq "Managed by Agent Relay's install-user-service script." "$unit_path"; then
+    printf 'refusing to replace unmanaged unit: %s\n' "$unit_path" >&2
+    exit 1
+fi
+
+temporary_unit=$(mktemp "$unit_dir/agent-relay.service.XXXXXX")
+python3 - "$template_path" "$temporary_unit" "$project_dir" "$env_bin" "$relay_bin" <<'PY'
+from pathlib import Path
+import sys
+
+template_path, output_path, project_dir, env_bin, relay_bin = sys.argv[1:]
+content = Path(template_path).read_text(encoding="utf-8")
+replacements = {
+    "@PROJECT_DIR@": project_dir,
+    "@ENV_BIN@": env_bin,
+    "@RELAY_BIN@": relay_bin,
+}
+for marker, value in replacements.items():
+    if content.count(marker) != 1:
+        raise RuntimeError(f"expected exactly one {marker} placeholder")
+    if "\n" in value:
+        raise RuntimeError(f"newline is not allowed in {marker}")
+    content = content.replace(marker, value)
+Path(output_path).write_text(content, encoding="utf-8")
+PY
+chmod 644 "$temporary_unit"
+mv "$temporary_unit" "$unit_path"
+
+if [[ -L "$wants_path" ]]; then
+    if [[ $(readlink "$wants_path") != "../agent-relay.service" ]]; then
+        printf 'refusing to replace unexpected enablement link: %s\n' "$wants_path" >&2
+        exit 1
+    fi
+elif [[ -e "$wants_path" ]]; then
+    printf 'refusing to replace non-symlink enablement path: %s\n' "$wants_path" >&2
+    exit 1
+else
+    ln -s ../agent-relay.service "$wants_path"
+fi
+
+if [[ -e "$keepalive_path" ]] && ! cmp -s "$keepalive_source" "$keepalive_path"; then
+    printf 'refusing to replace existing Windows startup file: %s\n' "$keepalive_path" >&2
+    exit 1
+fi
+install -m 644 "$keepalive_source" "$keepalive_path"
+
+if [[ ! -e "$linger_path" ]]; then
+    sudo install -d -m 755 /var/lib/systemd/linger
+    sudo install -m 644 /dev/null "$linger_path"
+fi
+
+if systemctl --user daemon-reload 2>/dev/null; then
+    systemctl --user restart agent-relay.service
+fi
+
+after_count=$(count_present)
+printf 'managed_artifacts_after=%s expected_after=%s\n' \
+    "$after_count" "${#managed_paths[@]}"
+if [[ "$after_count" -ne "${#managed_paths[@]}" ]]; then
+    printf 'service installation self-check failed\n' >&2
+    exit 1
+fi
+if [[ $(stat -c '%a' "$environment_path") != "600" ]]; then
+    printf 'service environment permissions are not 600\n' >&2
+    exit 1
+fi
+printf 'installed=true enabled=true\n'
+if ! systemctl is-system-running >/dev/null 2>&1; then
+    printf 'activation_pending=wsl-restart\n'
+fi
