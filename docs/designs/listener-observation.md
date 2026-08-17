@@ -26,8 +26,8 @@ The required behavior is defined in [Agent Relay requirements](../requirements.m
   does not turn notification into an exclusive queue claim.
 - Server-Sent Event connections do not affect the MCP-wait observation.
 - `SIGTERM` or `SIGINT` enters shutdown before the web server waits for open
-  connections, wakes every MCP wait and SSE stream, and changes no durable
-  message state.
+  connections, wakes every MCP wait, `/v1/events` SSE stream, and MCP
+  Streamable HTTP GET stream, and changes no durable message state.
 - A false observation may trigger a tmux wake notice, but the notice never
   contains or replaces the actionable Relay payload.
 
@@ -49,6 +49,20 @@ stateDiagram-v2
     NoMcpWait --> ShuttingDown: SIGTERM or SIGINT
     Waiting --> ShuttingDown: SIGTERM or SIGINT / wake all waits
     ShuttingDown --> [*]: MCP waits error / SSE streams end
+```
+
+An MCP Streamable HTTP session has a separate transport state. Its standalone
+GET stream does not affect listener observation, but shutdown terminates every
+active SDK transport before Uvicorn drains HTTP connections:
+
+```mermaid
+stateDiagram-v2
+    [*] --> NoTransport
+    NoTransport --> TransportOpen: MCP session initializes
+    TransportOpen --> TransportOpen: tool requests and responses
+    TransportOpen --> ShuttingDown: SIGTERM or SIGINT / terminate transport
+    NoTransport --> ShuttingDown: SIGTERM or SIGINT
+    ShuttingDown --> [*]: standalone GET stream ends
 ```
 
 Message storage is an independent durable state. Neither a listener transition
@@ -76,13 +90,13 @@ step legitimately changes the result to `true`.
 
 Each cell names the guard between a state writer and work already in flight.
 
-| State writer | Send or reply observing a recipient | MCP wait or SSE stream checking the durable inbox | Handoff deciding whether to wake |
+| State writer | Send or reply observing a recipient | MCP wait or listener stream checking the durable inbox | Handoff deciding whether to wake |
 | --- | --- | --- | --- |
 | Wait registers | Shared hub lock orders registration before or after observation. | Registration happens before the first inbox check. | The captured send result is immutable. |
 | Send or reply commits and notifies | SQLite commits before the hub observation and event set. | Inbox check plus event semantics prevent a commit from being missed. | The returned boolean and message ID come from the same send operation. |
 | Wait returns, fails, or is cancelled | `finally` removes the wait under the shared hub lock. | Durable messages remain unacknowledged until recipient processing. | A later send observes the updated count; an earlier result is not reinterpreted. |
 | Recipient acknowledges | Acknowledgement does not mutate listener state. | Concurrent waits may already hold the same unacknowledged payload. | Wake notices refer to Relay IDs and never become message payloads. |
-| Process enters shutdown | Notification reports false after shutdown begins. | Every event is set; MCP waits error and SSE streams end without changing message state. | A missing send result remains ambiguous; a returned false result remains authoritative. |
+| Process enters shutdown | Notification reports false after shutdown begins. | Every event is set; MCP waits error, `/v1/events` streams end, and active MCP SDK transports terminate without changing message state. | A missing send result remains ambiguous; a returned false result remains authoritative. |
 | Relay process restarts | In-memory counts reset; the next send observes no wait. | SQLite replays every unacknowledged message to a replacement wait. | A false result permits recovery without claiming message loss. |
 
 ## Toy protocol model
@@ -95,8 +109,8 @@ python docs/designs/listener_observation_simulator.py
 
 The model covers send-before-wait, an active wait, cancellation, concurrent
 waits, restart, the client-deadline replacement gap, and signal-driven
-shutdown. All scenarios must finish with their expected observation and durable
-inbox contents.
+shutdown of both application and MCP transport streams. All scenarios must
+finish with their expected observation and durable inbox contents.
 
 ## Test-double fidelity review
 
@@ -104,7 +118,9 @@ The toy model has properties production does not: explicit event order,
 deterministic execution, zero I/O latency, and failure-free storage. It cannot
 validate asyncio cancellation timing, Model Context Protocol transport
 disconnects, operating-system signal delivery, SQLite failures, or process
-death between commit and response.
+death between commit and response. It also models MCP transport termination as
+a state change; only a live test against the pinned MCP SDK can prove that its
+standalone GET stream releases the Uvicorn connection.
 
 The in-process HTTP and MCP tests also run faster and more deterministically
 than separate clients. They must force scheduling boundaries around wait

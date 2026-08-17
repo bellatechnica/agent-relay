@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 class RelayModel:
     active_mcp_waits: int = 0
     active_sse_streams: int = 0
+    active_mcp_transport_streams: int = 0
     pending_message_ids: list[str] = field(default_factory=list)
     shutting_down: bool = False
 
@@ -40,18 +41,25 @@ class RelayModel:
             raise RuntimeError("relay is shutting down")
         self.active_sse_streams += 1
 
+    def start_mcp_transport_stream(self) -> None:
+        if self.shutting_down:
+            raise RuntimeError("relay is shutting down")
+        self.active_mcp_transport_streams += 1
+
     def acknowledge(self, message_id: str) -> None:
         self.pending_message_ids.remove(message_id)
 
     def restart(self) -> None:
         self.active_mcp_waits = 0
         self.active_sse_streams = 0
+        self.active_mcp_transport_streams = 0
         self.shutting_down = False
 
     def begin_shutdown(self) -> None:
         self.shutting_down = True
         self.active_mcp_waits = 0
         self.active_sse_streams = 0
+        self.active_mcp_transport_streams = 0
 
 
 def run_scenarios() -> None:
@@ -96,10 +104,12 @@ def run_scenarios() -> None:
     signal_shutdown = RelayModel()
     assert signal_shutdown.start_wait() is None
     signal_shutdown.start_sse_stream()
+    signal_shutdown.start_mcp_transport_stream()
     assert signal_shutdown.send("before-shutdown") is True
     signal_shutdown.begin_shutdown()
     assert signal_shutdown.active_mcp_waits == 0
     assert signal_shutdown.active_sse_streams == 0
+    assert signal_shutdown.active_mcp_transport_streams == 0
     assert signal_shutdown.pending_message_ids == ["before-shutdown"]
     assert signal_shutdown.send("during-shutdown") is False
     assert signal_shutdown.pending_message_ids == [
