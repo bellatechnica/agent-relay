@@ -47,6 +47,11 @@ relay's MCP tools.
 ## Messaging behavior
 
 - An agent sends a complete message by exact recipient slug.
+- Every successful send or reply reports whether the relay observed at least one
+  active MCP `wait_for_messages` call for the recipient when it notified that
+  recipient. The observation is named `recipient_waiting_at_send`; it describes
+  that instant only and does not claim that the recipient processed the message
+  or later replaced its listener.
 - An agent reads every pending message for its own slug in send order.
 - A reply to a received message is routed to the other participant without the
   replying agent supplying that participant's slug or internal session ID.
@@ -116,10 +121,11 @@ slug's inbox, reply to a message, and acknowledge a processed message.
 
 ## Handoff integration
 
-The `handoff` skill must use Agent Relay as its default and exclusive
-inter-session communication channel. It uses `tmux-message` only when the user
-explicitly requests tmux mode. This rule governs communication after launch;
-the skill may still use tmux to create and host a local agent window.
+The `handoff` skill must use Agent Relay as its default durable message channel.
+Tmux has two narrower roles: it may host the new local agent window, and it may
+wake a local recipient when a successful Relay send reports
+`recipient_waiting_at_send = false`. The Relay message remains the only copy of
+the actionable payload in this recovery path.
 
 When the relay channel is selected, the spawning session must:
 
@@ -134,12 +140,25 @@ When the relay channel is selected, the spawning session must:
 5. Use the two slugs for clarifications, blocked-state notices, coordination
    signals, and completion reports that would otherwise travel through
    `tmux-message`.
+6. Inspect `recipient_waiting_at_send` after every successful send or reply. If
+   it is `true`, do not inject a tmux message. If it is `false` and the recipient
+   is reachable through the same tmux server, invoke the `tmux-message` skill to
+   send only a wake notice containing the Relay message ID and an instruction to
+   process the Relay inbox and restore exactly one listener. Do not copy the
+   actionable message content into the wake notice.
 
 The existing `tmux-message` path remains available as an explicit user-selected
-mode. A handoff must not silently fall back to tmux when relay registration or
-connectivity fails; it must report the relay blocker and obtain the user's
-direction. Relay remains usable when the sessions do not share a reachable tmux
-server, including across a Docker Sandbox boundary.
+mode. When Relay registration or its live preflight fails before launch, a
+handoff may use tmux as the exclusive message channel only when both sessions
+are reachable through the same tmux server. It must report that fallback to the
+user and give both sessions their pane addresses; if tmux is unavailable too,
+it reports the blocker. A handoff must not silently change channels.
+
+A successful Relay send with `recipient_waiting_at_send = false` remains
+durably queued when no tmux path exists, including across a Docker Sandbox
+boundary. The sender reports that delivery is queued but active wake-up was not
+verified. An ambiguous Relay send failure must never cause the payload to be
+resent through tmux because the first call may already have committed it.
 
 ## Delivery and wake-up boundary
 
@@ -154,6 +173,15 @@ acknowledge them. Cancelling a wait before delivery must not change stored
 message state. The server must not impose a timeout or message-count limit on a
 wait. Concurrent listeners for one slug may receive the same unacknowledged
 messages; a listener is notification, not an exclusive queue claim.
+
+The relay tracks active MCP waits in memory. A wait becomes observable before
+it checks the durable inbox and ceases to be observable whenever it returns,
+fails, or is cancelled. A server restart therefore begins with no observed
+waits while retaining every durable message. `send_message` and
+`reply_to_message` return `recipient_waiting_at_send = true` exactly when one or
+more waits were observable for the recipient at notification time; otherwise
+they return `false`. Server-Sent Event connections are not MCP listener
+subagents and do not affect this field.
 
 An MCP response does not itself start a new model turn. The supported immediate
 wake mechanism is completion of a background listener subagent that made the
@@ -228,6 +256,15 @@ hold:
 - A relay-based handoff prompt contains both assigned slugs, registration
   instructions, listener startup and replacement instructions,
   acknowledgement discipline, and the reply instruction.
+- A send with no active recipient MCP wait returns
+  `recipient_waiting_at_send = false`; the same send while one or more recipient
+  waits are active returns `true`. After every wait has returned or been
+  cancelled, a later send returns `false`. Restarting the server also resets the
+  observation to `false` without removing pending messages.
+- A relay-based handoff uses no tmux wake notice when a send reports
+  `recipient_waiting_at_send = true`. When it reports `false` and both sessions
+  share a reachable tmux server, the sender delivers one verified tmux wake
+  notice containing the Relay message ID but none of its actionable content.
 - In an ordinary Codex session configured with
   `tool_timeout_sec = 86400`, a cheaper-model background listener remains
   blocked while its inbox is empty for up to 24 hours. The parent remains in
