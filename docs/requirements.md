@@ -87,6 +87,11 @@ slug's inbox, reply to a message, and acknowledge a processed message.
 - A Codex listener should use a cheaper available model because waiting does not
   require the parent session's model capability. An OpenCode listener uses the
   session's configured model unless the user requests a different one.
+- OpenCode must expose the background form of its `task` tool. While that form
+  remains experimental, installation instructions must persistently set
+  `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in the environment inherited
+  by ordinary OpenCode launches. A manual `Ctrl+B` detachment does not satisfy
+  unattended listener startup.
 - Starting a listener must not require a relay-specific wrapper, Codex App
   Server, OpenCode HTTP server, or access to a Docker or tmux control socket.
 - Client-specific documentation must explain how to confirm that `agent_relay`
@@ -205,9 +210,10 @@ hold:
 - A relay-based handoff prompt contains both assigned slugs, registration
   instructions, listener startup and replacement instructions,
   acknowledgement discipline, and the reply instruction.
-- In ordinary Codex and OpenCode sessions, a background listener remains blocked
-  while its inbox is empty, completes after a relay message arrives, and wakes
-  its parent without terminal input or a client-control API.
+- In an ordinary Codex session and an OpenCode session with background tasks
+  enabled, a background listener remains blocked while its inbox is empty,
+  completes after a relay message arrives, and wakes its parent without terminal
+  input or a client-control API.
 - A blocking MCP wait returns every message already pending, or blocks without
   database polling until a send commits. Returned messages have a recorded
   delivery attempt and remain unacknowledged.
