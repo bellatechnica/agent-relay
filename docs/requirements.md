@@ -19,8 +19,10 @@ setup described in the [Docker Sandbox guide](docker-sandbox.md).
 
 ## Identity and registration
 
-- The immediate workflow uses the server's explicit unauthenticated mode.
-  Existing token-authenticated operation remains available.
+- The server defaults to unauthenticated slug mode, so the immediate workflow
+  requires no authentication flag, administrator token, or session token.
+  Token-authenticated operation remains available through an explicit server
+  option.
 - A session registers through MCP using a non-empty slug and its agent kind,
   such as `codex`, `claude`, or `opencode`.
 - The slug is the only identity the user or agent needs for routine messaging.
@@ -118,8 +120,9 @@ immediate slug-routing scope.
 - The relay must work on host loopback and through Docker's
   `host.docker.internal` route without exposing a Docker or tmux control socket
   to the sandbox.
-- Unauthenticated mode must be opt-in and visibly documented as trusted-network
-  operation. It must not silently weaken token-authenticated mode.
+- Unauthenticated slug mode must be the default and visibly documented as
+  trusted-network operation. Token-authenticated mode must be an explicit
+  opt-in and must retain its existing credential checks when selected.
 - The server must continue to support durable storage, health checking, and
   managed autostart documented in the [README](../README.md).
 - Web access and automatic agent execution are properties of the sandbox/client
@@ -146,6 +149,8 @@ hold:
 
 - Two independent MCP clients can register distinct slugs without administrator
   or session tokens.
+- Starting the server without an authentication option selects unauthenticated
+  slug mode; selecting token mode without an administrator token fails visibly.
 - Repeating registration for an active slug returns the same relay identity and
   does not add another active session.
 - The first client can send one message using only the second client's slug; the
