@@ -51,10 +51,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--authentication-mode",
         choices=AUTHENTICATION_MODES,
-        default=os.environ.get("AGENT_RELAY_AUTHENTICATION_MODE", "token"),
+        default=os.environ.get("AGENT_RELAY_AUTHENTICATION_MODE", "none"),
         help=(
-            "caller identity mode: token requires bearer credentials; "
-            "none trusts explicit slugs (default: token)"
+            "caller identity mode: none trusts explicit slugs; "
+            "token requires bearer credentials (default: none)"
         ),
     )
     return parser

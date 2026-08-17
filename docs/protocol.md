@@ -1,9 +1,9 @@
 # Relay protocol
 
-A client addresses its recipient by exact slug. In the default `token`
-authentication mode, its bearer token establishes the acting session. In
-`none` mode, the client supplies its own slug explicitly. Active slugs are
-unique, and message routing never selects an arbitrary partial match.
+A client addresses its recipient by exact slug. In the default `none` mode,
+the client self-registers and supplies its own acting slug explicitly. In
+explicit `token` mode, its bearer token establishes the acting session. Active
+slugs are unique, and message routing never selects an arbitrary partial match.
 
 ## Message lifecycle
 
@@ -19,7 +19,25 @@ processing proof.
 
 ## Identity modes
 
-Start the default authenticated mode with an administrator token:
+Start the default trusted slug mode without credentials:
+
+```bash
+agent-relay
+```
+
+`POST /v1/sessions` registers or recovers a slug without returning a token.
+Other HTTP calls identify the acting session with `Agent-Relay-Slug: SLUG`.
+MCP clients call `register_session(slug, agent_kind)` and pass the same slug as
+`acting_slug` on later tools. Anyone who can reach the relay can supply any
+active slug in this mode.
+
+A self-registration response contains no token. Before changing an existing
+database to `token` mode, revoke or replace identities created through
+self-registration; they have no recoverable plaintext credential for
+authenticated use. Messages remain under their original sender and recipient
+IDs.
+
+Opt into authenticated mode with an administrator token:
 
 ```bash
 export AGENT_RELAY_ADMIN_TOKEN="$(openssl rand -hex 32)"
@@ -32,11 +50,11 @@ Every authenticated request uses:
 Authorization: Bearer SESSION_TOKEN
 ```
 
-Only `GET /health` is unauthenticated. Administrative routes require the value
-of `AGENT_RELAY_ADMIN_TOKEN`; ordinary routes and MCP tools require a session
-token. The server accepts the host names `127.0.0.1`, `localhost`, and
-`host.docker.internal` to prevent DNS-rebinding requests through unexpected Host
-headers.
+In token mode, only `GET /health` is unauthenticated. Administrative routes
+require the value of `AGENT_RELAY_ADMIN_TOKEN`; ordinary routes and MCP tools
+require a session token. In both modes, the server accepts the host names
+`127.0.0.1`, `localhost`, and `host.docker.internal` to prevent DNS-rebinding
+requests through unexpected Host headers.
 
 ### Authenticated flow recap
 
@@ -53,24 +71,6 @@ headers.
 
 No participant receives another participant's token. The administrator token
 is used only to issue and revoke session credentials.
-
-For a trusted development network, disable authentication explicitly:
-
-```bash
-agent-relay --authentication-mode none
-```
-
-In `none` mode, `POST /v1/sessions` registers or recovers a slug without
-returning a token. Other HTTP calls identify the acting session with
-`Agent-Relay-Slug: SLUG`. MCP clients call `register_session(slug, agent_kind)`
-and pass the same slug as `acting_slug` on later tools. Anyone who can reach the
-relay can supply any active slug in this mode.
-
-A self-registration response in `none` mode contains no token. Before changing
-an existing database back to `token` mode, revoke or replace identities created
-through self-registration; they have no recoverable plaintext credential for
-authenticated use. Messages remain in the database under their original sender
-and recipient IDs.
 
 ## HTTP API
 
@@ -90,14 +90,13 @@ All request and response bodies are JSON except the SSE stream.
 | `POST /v1/messages/{message_id}/ack` | Recipient token or acting-slug header | Acknowledge a message |
 | `POST /v1/messages/{message_id}/reply` | Participant token or acting-slug header | Reply to the other participant |
 
-Issue a session:
+Register a session in the default mode:
 
 ```bash
 curl --fail-with-body \
-  -H "Authorization: Bearer $AGENT_RELAY_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"slug":"sandbox-codex","agent_kind":"codex"}' \
-  http://127.0.0.1:8787/v1/admin/sessions
+  http://127.0.0.1:8787/v1/sessions
 ```
 
 Send a message. `content` is stored verbatim; it must be a non-empty JSON string.
@@ -106,7 +105,7 @@ participants.
 
 ```bash
 curl --fail-with-body \
-  -H "Authorization: Bearer $AGENT_RELAY_TOKEN" \
+  -H 'Agent-Relay-Slug: host-coordinator' \
   -H 'Content-Type: application/json' \
   -d "{\"recipient_slug\":\"$RECIPIENT_SLUG\",\"content\":\"inspect the failing test\"}" \
   http://127.0.0.1:8787/v1/messages
@@ -116,7 +115,7 @@ Open the push stream from a non-browser receiver:
 
 ```bash
 curl --no-buffer --fail-with-body \
-  -H "Authorization: Bearer $AGENT_RELAY_TOKEN" \
+  -H 'Agent-Relay-Slug: host-coordinator' \
   http://127.0.0.1:8787/v1/events
 ```
 

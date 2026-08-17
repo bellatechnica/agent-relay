@@ -11,25 +11,28 @@ Preview every machine-local target before writing it:
 scripts/install-user-service
 ```
 
-Install the service, generate its admin token, enable user linger, and install a
-Windows Startup keepalive:
+Install the service in the default trusted slug mode, enable user linger, and
+install a Windows Startup keepalive:
 
 ```bash
 scripts/install-user-service --execute
 ```
 
-The generated admin token is stored with mode `0600` in
-`~/.config/agent-relay/service.env`. It is not printed or written to the
-repository. The installed unit is `~/.config/systemd/user/agent-relay.service`.
+The installer creates `~/.config/agent-relay/service.env` with mode `0600` for
+optional machine-local settings. The installed unit is
+`~/.config/systemd/user/agent-relay.service`.
 
-To run the installed service without authentication, add this machine-local
-setting to `~/.config/agent-relay/service.env`, then restart the service:
+To opt into token authentication, add both settings below to that environment
+file, substitute a newly generated administrator token, and restart the
+service:
 
 ```bash
-AGENT_RELAY_AUTHENTICATION_MODE=none
+AGENT_RELAY_AUTHENTICATION_MODE=token
+AGENT_RELAY_ADMIN_TOKEN=GENERATED_ADMIN_TOKEN
 ```
 
-The administrator token may remain in that file; it is ignored in `none` mode.
+Keep the administrator token only in machine-local configuration. An ordinary
+installation does not generate or require one.
 
 ## Activate systemd after changing WSL configuration
 

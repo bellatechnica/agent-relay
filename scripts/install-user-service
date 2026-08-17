@@ -61,8 +61,6 @@ mkdir -p "$service_config_dir" "$state_home/agent-relay" "$unit_dir" "$wants_dir
 if [[ ! -e "$environment_path" ]]; then
     temporary_environment=$(mktemp "$service_config_dir/service.env.XXXXXX")
     chmod 600 "$temporary_environment"
-    admin_token=$(openssl rand -hex 32)
-    printf 'AGENT_RELAY_ADMIN_TOKEN=%s\n' "$admin_token" > "$temporary_environment"
     mv "$temporary_environment" "$environment_path"
 fi
 chmod 600 "$environment_path"

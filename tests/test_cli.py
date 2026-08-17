@@ -1,7 +1,9 @@
+import pytest
+
 from agent_relay import cli
 
 
-def test_none_authentication_mode_does_not_require_admin_token(
+def test_default_authentication_mode_does_not_require_admin_token(
     monkeypatch, tmp_path
 ):
     observed = {}
@@ -10,8 +12,6 @@ def test_none_authentication_mode_does_not_require_admin_token(
         "sys.argv",
         [
             "agent-relay",
-            "--authentication-mode",
-            "none",
             "--database-path",
             str(tmp_path / "relay.sqlite3"),
         ],
@@ -31,3 +31,22 @@ def test_none_authentication_mode_does_not_require_admin_token(
     assert observed["app"].state.authentication_mode == "none"
     assert observed["host"] == "127.0.0.1"
     assert observed["port"] == 8787
+
+
+def test_token_authentication_mode_requires_admin_token(monkeypatch, tmp_path):
+    monkeypatch.delenv("AGENT_RELAY_ADMIN_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "agent-relay",
+            "--authentication-mode",
+            "token",
+            "--database-path",
+            str(tmp_path / "relay.sqlite3"),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cli.main()
+
+    assert raised.value.code == 2

@@ -40,7 +40,11 @@ def create_session(client, name, kind):
 
 
 def test_admin_issues_token_once_and_session_auth_works(tmp_path):
-    app = create_app(tmp_path / "relay.sqlite3", ADMIN_TOKEN)
+    app = create_app(
+        tmp_path / "relay.sqlite3",
+        ADMIN_TOKEN,
+        authentication_mode="token",
+    )
     with TestClient(app) as client:
         issued = create_session(client, "sandbox", "codex")
         identity = client.get(
@@ -56,7 +60,11 @@ def test_admin_issues_token_once_and_session_auth_works(tmp_path):
 
 
 def test_invalid_credentials_return_structured_error(tmp_path):
-    app = create_app(tmp_path / "relay.sqlite3", ADMIN_TOKEN)
+    app = create_app(
+        tmp_path / "relay.sqlite3",
+        ADMIN_TOKEN,
+        authentication_mode="token",
+    )
     with TestClient(app) as client:
         response = client.get("/v1/whoami", headers=authorization("wrong"))
 
@@ -68,7 +76,6 @@ def test_none_mode_self_registration_and_http_round_trip(tmp_path):
     app = create_app(
         tmp_path / "relay.sqlite3",
         None,
-        authentication_mode="none",
     )
     with TestClient(app) as client:
         outside = client.post(
@@ -220,7 +227,11 @@ def test_none_mode_mcp_tools_self_register_and_round_trip(tmp_path):
 
 
 def test_token_mode_mcp_identity_cannot_be_overridden(tmp_path):
-    app = create_app(tmp_path / "relay.sqlite3", ADMIN_TOKEN)
+    app = create_app(
+        tmp_path / "relay.sqlite3",
+        ADMIN_TOKEN,
+        authentication_mode="token",
+    )
     with TestClient(app) as client:
         tool_names = {
             tool.name for tool in asyncio.run(app.state.mcp.list_tools())
@@ -246,7 +257,11 @@ def test_token_mode_mcp_identity_cannot_be_overridden(tmp_path):
 
 def test_http_round_trip_is_durable_and_two_way(tmp_path):
     database_path = tmp_path / "relay.sqlite3"
-    first_app = create_app(database_path, ADMIN_TOKEN)
+    first_app = create_app(
+        database_path,
+        ADMIN_TOKEN,
+        authentication_mode="token",
+    )
     with TestClient(first_app) as client:
         outside = create_session(client, "outside", "codex")
         sandbox = create_session(client, "sandbox", "claude")
@@ -259,7 +274,11 @@ def test_http_round_trip_is_durable_and_two_way(tmp_path):
             },
         ).json()
 
-    restarted_app = create_app(database_path, ADMIN_TOKEN)
+    restarted_app = create_app(
+        database_path,
+        ADMIN_TOKEN,
+        authentication_mode="token",
+    )
     with TestClient(restarted_app) as client:
         inbox = client.get(
             "/v1/messages", headers=authorization(sandbox["token"])
@@ -287,7 +306,11 @@ def test_http_round_trip_is_durable_and_two_way(tmp_path):
 
 
 def test_mcp_rejects_body_above_approved_boundary_without_storing_it(tmp_path):
-    app = create_app(tmp_path / "relay.sqlite3", ADMIN_TOKEN)
+    app = create_app(
+        tmp_path / "relay.sqlite3",
+        ADMIN_TOKEN,
+        authentication_mode="token",
+    )
     oversized_body = b"x" * (MCP_MAX_REQUEST_BODY_BYTES + 1)
     with TestClient(app) as client:
         response = client.post(

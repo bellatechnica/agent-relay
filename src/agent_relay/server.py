@@ -40,7 +40,7 @@ MCP_ALLOWED_HOSTS = [
     "host.docker.internal:*",
     "testserver:*",
 ]
-AUTHENTICATION_MODES = ("token", "none")
+AUTHENTICATION_MODES = ("none", "token")
 
 
 def _bearer_token(authorization: str | None) -> str:
@@ -111,7 +111,7 @@ def create_app(
     database_path: Path,
     admin_token: str | None,
     *,
-    authentication_mode: str = "token",
+    authentication_mode: str = "none",
     heartbeat_seconds: float = 15.0,
 ) -> Starlette:
     """Build one single-process relay application."""

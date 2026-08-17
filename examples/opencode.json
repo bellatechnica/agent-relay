@@ -5,10 +5,7 @@
       "agent-relay": {
         "type": "remote",
         "url": "http://host.docker.internal:8787/mcp",
-        "oauth": false,
-        "headers": {
-          "Authorization": "Bearer {env:AGENT_RELAY_TOKEN}"
-        }
+        "oauth": false
       }
     }
   }
