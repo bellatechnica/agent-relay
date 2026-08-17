@@ -37,11 +37,20 @@ Add this table to `~/.codex/config.toml`:
 [mcp_servers.agent_relay]
 url = "http://127.0.0.1:8787/mcp"
 required = true
+tool_timeout_sec = 86400
 ```
 
 Run `codex mcp list` before launch to confirm that `agent_relay` is configured.
 In a running session, `/mcp` shows active servers. See the official
 [Codex MCP guide](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+
+`tool_timeout_sec = 86400` gives one blocking listener call a 24-hour client
+deadline. When it expires without a message, Codex reports the timeout and
+starts one replacement listener. The relay does not remove or acknowledge a
+message when the client cancels; a message committed during the replacement gap
+remains pending. The finite deadline limits how long one client request,
+listener subagent, and active parent turn remain open. Codex documents no
+unlimited value for this setting.
 
 ### Claude Code
 

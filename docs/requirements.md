@@ -83,6 +83,14 @@ slug's inbox, reply to a message, and acknowledge a processed message.
 - A listener subagent waits for messages through MCP and finishes when messages
   arrive. The parent reads and handles every pending message, acknowledges each
   message only after processing it, and then starts one replacement listener.
+- Codex must configure the `agent_relay` MCP server with
+  `tool_timeout_sec = 86400`. This client-side deadline ends an unchanged wait
+  after 24 hours; it does not remove or acknowledge a relay message. The parent
+  reports the timeout and starts exactly one replacement listener, which
+  receives any message that became pending between the cancelled wait and its
+  replacement. Changing this deadline is a product decision because it trades
+  reconnect frequency against the lifetime of an open request, listener
+  subagent, and active parent turn.
 - Codex must keep the parent turn active on its collaboration wait while the
   listener is blocked. Codex 0.147.0 records a child that finishes after the
   parent has returned to the prompt, but does not start a new parent turn to
@@ -220,11 +228,14 @@ hold:
 - A relay-based handoff prompt contains both assigned slugs, registration
   instructions, listener startup and replacement instructions,
   acknowledgement discipline, and the reply instruction.
-- In an ordinary Codex session, a cheaper-model background listener remains
-  blocked while its inbox is empty; the parent remains in its collaboration
-  wait, accepts a second user prompt during that wait, and handles the exact
-  relay message after the listener completes without terminal-based message
-  injection or a client-control API.
+- In an ordinary Codex session configured with
+  `tool_timeout_sec = 86400`, a cheaper-model background listener remains
+  blocked while its inbox is empty for up to 24 hours. The parent remains in
+  its collaboration wait, accepts a second user prompt during that wait, and
+  handles the exact relay message after the listener completes without
+  terminal-based message injection or a client-control API. If the 24-hour
+  client deadline expires first, the parent reports the timeout and starts one
+  replacement listener without acknowledging any message.
 - In an ordinary OpenCode session with background tasks enabled, a listener
   using the session's current model remains blocked while its inbox is empty,
   completes after a relay message arrives, and starts the parent handling turn

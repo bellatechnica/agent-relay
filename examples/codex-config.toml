@@ -3,3 +3,4 @@ web_search = "live"
 [mcp_servers.agent_relay]
 url = "http://host.docker.internal:8787/mcp"
 required = true
+tool_timeout_sec = 86400

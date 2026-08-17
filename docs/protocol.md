@@ -161,6 +161,15 @@ commits. A wait returns every unacknowledged message in send order and records a
 delivery attempt without acknowledging any message. Cancellation before
 delivery leaves stored state unchanged.
 
+Codex clients configure the `agent_relay` MCP server with
+`tool_timeout_sec = 86400`. That client-side deadline cancels one unchanged MCP
+call after 24 hours; the relay server still imposes no wait timeout. The agent
+reports the timeout and starts exactly one replacement listener. A message that
+commits after cancellation and before replacement remains pending and returns
+as soon as the replacement wait begins. The 24-hour deadline therefore bounds
+the open client request, listener subagent, and active parent turn without
+discarding message content or turning the server into a polling loop.
+
 An ordinary agent session uses a background subagent for that MCP call. The
 child returns the complete result to its parent, which processes and explicitly
 acknowledges each message before starting one replacement listener. Codex

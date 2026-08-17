@@ -70,8 +70,19 @@ Then keep exactly one background listener for this slug:
 5. Start one replacement listener after all returned messages are handled.
 
 Do not start a second listener while one is active. Do not poll `read_inbox` or
-repeat short waits; the MCP wait remains blocked until a message arrives. A
-listener reports durable delivery, not completed processing.
+repeat short waits; the MCP wait remains blocked until a message arrives or the
+configured client deadline expires. A listener reports durable delivery, not
+completed processing.
+
+Configure Codex's `agent_relay` MCP server with
+`tool_timeout_sec = 86400`. If an unchanged Codex wait reaches that 24-hour
+client deadline, report the failed operation, caller slug, and timeout, then
+start exactly one replacement listener. Do not acknowledge anything because a
+timeout delivers no message. A message committed between cancellation and
+replacement remains pending and returns when the replacement wait begins. This
+once-per-day replacement is recovery from the configured client deadline, not
+short-wait polling; any other repeated failure requires diagnosis instead of a
+retry loop.
 
 Use the control behavior supported by the current client:
 

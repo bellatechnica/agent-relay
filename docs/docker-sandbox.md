@@ -102,6 +102,7 @@ web_search = "live"
 [mcp_servers.agent_relay]
 url = "http://host.docker.internal:8787/mcp"
 required = true
+tool_timeout_sec = 86400
 ```
 
 The configuration locations are defined in the official
@@ -167,6 +168,12 @@ The listener subagent calls MCP `wait_for_messages`; the server holds that call
 without polling SQLite and returns every pending message when a send commits.
 The child returns the complete result without acknowledging it. The parent
 processes each message, acknowledges it, and starts one replacement listener.
+
+Codex uses `tool_timeout_sec = 86400` for this MCP server. The client cancels an
+unchanged listener after 24 hours and starts one replacement; the relay server
+does not time out the wait. Messages committed during the replacement gap stay
+pending and return when the new wait begins. This deadline bounds the lifetime
+of one open client request, listener subagent, and active parent turn.
 
 Codex keeps its parent turn active on the collaboration wait and uses a cheaper
 listener model when available. A user prompt can steer that running parent,
