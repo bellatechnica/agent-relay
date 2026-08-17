@@ -217,6 +217,7 @@ def test_none_mode_mcp_tools_self_register_and_round_trip(tmp_path):
         "list_sessions",
         "send_message",
         "read_inbox",
+        "wait_for_messages",
         "acknowledge_message",
         "reply_to_message",
     }
@@ -224,6 +225,139 @@ def test_none_mode_mcp_tools_self_register_and_round_trip(tmp_path):
     assert [message["message_id"] for message in inbox] == [sent["message_id"]]
     assert reply["recipient_slug"] == "outside"
     assert acknowledged["acknowledged_at"] is not None
+
+
+def test_mcp_wait_returns_every_pending_message_in_order(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None)
+    with TestClient(app):
+        call_mcp(
+            app,
+            "register_session",
+            {"slug": "sender", "agent_kind": "codex"},
+        )
+        call_mcp(
+            app,
+            "register_session",
+            {"slug": "recipient", "agent_kind": "opencode"},
+        )
+        sent = [
+            call_mcp(
+                app,
+                "send_message",
+                {
+                    "acting_slug": "sender",
+                    "recipient_slug": "recipient",
+                    "content": content,
+                },
+            )
+            for content in ("first", "second")
+        ]
+        delivered = call_mcp(
+            app,
+            "wait_for_messages",
+            {"acting_slug": "recipient"},
+        )["messages"]
+
+    assert [message["message_id"] for message in delivered] == [
+        message["message_id"] for message in sent
+    ]
+    assert all(
+        message["first_delivery_attempt_at"] is not None
+        and message["acknowledged_at"] is None
+        for message in delivered
+    )
+
+
+def test_mcp_wait_blocks_until_send_notifies_it(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None)
+    with TestClient(app):
+        call_mcp(
+            app,
+            "register_session",
+            {"slug": "sender", "agent_kind": "codex"},
+        )
+        recipient = call_mcp(
+            app,
+            "register_session",
+            {"slug": "recipient", "agent_kind": "opencode"},
+        )
+
+        async def scenario():
+            original_event_for = app.state.hub.event_for
+            wait_entered = asyncio.Event()
+
+            async def observed_event_for(session_id):
+                event = await original_event_for(session_id)
+                if session_id == recipient["session_id"]:
+                    wait_entered.set()
+                return event
+
+            app.state.hub.event_for = observed_event_for
+            wait_task = asyncio.create_task(
+                app.state.mcp.call_tool(
+                    "wait_for_messages", {"acting_slug": "recipient"}
+                )
+            )
+            await wait_entered.wait()
+            await asyncio.sleep(0)
+            assert not wait_task.done()
+
+            sent_result = await app.state.mcp.call_tool(
+                "send_message",
+                {
+                    "acting_slug": "sender",
+                    "recipient_slug": "recipient",
+                    "content": "wake now",
+                },
+            )
+            waited_result = await wait_task
+            return sent_result.structured_content, waited_result.structured_content
+
+        sent, waited = asyncio.run(scenario())
+
+    assert sent is not None
+    assert waited is not None
+    assert [message["message_id"] for message in waited["messages"]] == [
+        sent["message_id"]
+    ]
+    assert waited["messages"][0]["acknowledged_at"] is None
+
+
+def test_cancelling_mcp_wait_does_not_change_inbox(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None)
+    with TestClient(app):
+        recipient = call_mcp(
+            app,
+            "register_session",
+            {"slug": "recipient", "agent_kind": "claude"},
+        )
+
+        async def scenario():
+            original_event_for = app.state.hub.event_for
+            wait_entered = asyncio.Event()
+
+            async def observed_event_for(session_id):
+                event = await original_event_for(session_id)
+                if session_id == recipient["session_id"]:
+                    wait_entered.set()
+                return event
+
+            app.state.hub.event_for = observed_event_for
+            wait_task = asyncio.create_task(
+                app.state.mcp.call_tool(
+                    "wait_for_messages", {"acting_slug": "recipient"}
+                )
+            )
+            await wait_entered.wait()
+            await asyncio.sleep(0)
+            assert not wait_task.done()
+            wait_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await wait_task
+
+        asyncio.run(scenario())
+
+    assert app.state.store.unacknowledged_messages(recipient["session_id"]) == []
 
 
 def test_token_mode_mcp_identity_cannot_be_overridden(tmp_path):

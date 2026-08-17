@@ -107,6 +107,29 @@ def _message_payload(message: Message) -> dict[str, object]:
     return message.as_dict()
 
 
+def _record_delivery_attempts(
+    store: RelayStore, recipient_session_id: str, messages: list[Message]
+) -> list[Message]:
+    store.mark_delivery_attempt(
+        recipient_session_id, (message.message_id for message in messages)
+    )
+    return store.unacknowledged_messages(recipient_session_id)
+
+
+async def _wait_for_messages(
+    store: RelayStore, hub: NotificationHub, recipient_session_id: str
+) -> list[Message]:
+    wake_up = await hub.event_for(recipient_session_id)
+    while True:
+        wake_up.clear()
+        pending = store.unacknowledged_messages(recipient_session_id)
+        if pending:
+            return _record_delivery_attempts(
+                store, recipient_session_id, pending
+            )
+        await wake_up.wait()
+
+
 def create_app(
     database_path: Path,
     admin_token: str | None,
@@ -195,10 +218,9 @@ def create_app(
     async def read_inbox(request: Request) -> JSONResponse:
         recipient = _session_for_request(request, store, authentication_mode)
         messages = store.unacknowledged_messages(recipient.session_id)
-        store.mark_delivery_attempt(
-            recipient.session_id, (message.message_id for message in messages)
+        delivered = _record_delivery_attempts(
+            store, recipient.session_id, messages
         )
-        delivered = store.unacknowledged_messages(recipient.session_id)
         return JSONResponse(
             {"messages": [_message_payload(message) for message in delivered]}
         )
@@ -403,10 +425,18 @@ def _build_mcp_server(
         """Return every unacknowledged message in send order."""
         recipient = acting_session(context, acting_slug)
         messages = store.unacknowledged_messages(recipient.session_id)
-        store.mark_delivery_attempt(
-            recipient.session_id, (message.message_id for message in messages)
+        delivered = _record_delivery_attempts(
+            store, recipient.session_id, messages
         )
-        delivered = store.unacknowledged_messages(recipient.session_id)
+        return {"messages": [_message_payload(message) for message in delivered]}
+
+    @mcp.tool()
+    async def wait_for_messages(
+        context: Context, acting_slug: str | None = None
+    ) -> dict[str, object]:
+        """Wait without polling, then return every unacknowledged message."""
+        recipient = acting_session(context, acting_slug)
+        delivered = await _wait_for_messages(store, hub, recipient.session_id)
         return {"messages": [_message_payload(message) for message in delivered]}
 
     @mcp.tool()
