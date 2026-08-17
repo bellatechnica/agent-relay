@@ -5,8 +5,8 @@ the same host or across a Docker Sandbox boundary. Each session receives a relay
 identity and communicates through HTTP or the Model Context Protocol (MCP).
 Sessions self-register human-readable slugs by default; deployments that need
 caller authentication can opt into bearer-token mode. Server-Sent Events (SSE)
-wake connected receivers without polling, but do not start a new turn in an
-idle coding-agent client.
+and a blocking MCP inbox tool wake connected listeners without polling. A
+background listener subagent carries that result back into its agent session.
 
 ```text
 agent A ── HTTP/MCP ──> host relay <── HTTP/MCP ── agent B
@@ -54,16 +54,23 @@ Configure `http://127.0.0.1:8787/mcp` once as the remote MCP server named
 exact slug, then instruct it to:
 
 1. Call `register_session(slug, agent_kind)` at startup or resume.
-2. Call `send_message` with its `acting_slug` and the recipient's exact slug.
-3. Call `read_inbox` at prompt start and meaningful work checkpoints.
-4. Use `reply_to_message` for a response, then acknowledge the received message
-   only after processing it.
+2. Call `read_inbox` once, handle every pending message in send order, and
+   acknowledge each only after processing it.
+3. Start one background subagent that calls `wait_for_messages` once and returns
+   the complete result without acknowledging it.
+4. Handle the returned messages, acknowledge after processing, and start one
+   replacement listener.
+5. Call `send_message` with its `acting_slug` and the recipient's exact slug;
+   use `reply_to_message` when responding to a received message.
 
-A queued relay message does not wake an idle Codex, Claude Code, or OpenCode
-session. A client-specific receiver is required for automatic turn injection.
-The `handoff` workflow therefore includes both slugs and inbox checkpoints in
-the child prompt. Agent Relay is its default communication channel; tmux
-messaging is used only when the user explicitly requests tmux mode.
+Codex keeps its parent turn active on the collaboration wait while the cheaper
+listener subagent is blocked. OpenCode uses `task(background: true)` with its
+current model and requires
+`OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`. The
+[`agent-relay-message`](skills/agent-relay-message) skill contains the exact
+client rules. The `handoff` workflow includes both slugs and starts listeners
+on both sides. Agent Relay is its default communication channel; tmux messaging
+is used only when the user explicitly requests tmux mode.
 
 Use [the direct-session guide](docs/direct-sessions.md) when the relay and
 agents share a host. Use [the Docker Sandbox guide](docs/docker-sandbox.md) to

@@ -13,6 +13,18 @@ localhost, so the policy rule must allow `localhost:8787`, not
 
 ## 1. Choose the sandbox network policy
 
+Docker Sandbox must be able to create its microVM. Check KVM access before
+downloading agent images:
+
+```bash
+test -r /dev/kvm && test -w /dev/kvm
+```
+
+If that command fails, enable hardware virtualization and nested virtualization
+for the Linux environment, then make `/dev/kvm` accessible to the account that
+runs Docker Sandbox. `sbx diagnose` can report a healthy daemon even when this
+microVM prerequisite is absent; the sandbox container then fails at startup.
+
 For a new local installation, initialize Docker Sandbox with its Balanced
 policy. It denies destinations by default while allowing common model-provider,
 package-manager, source-hosting, registry, and cloud-service endpoints:
@@ -47,6 +59,19 @@ fetches them. Replace `codex` with `claude` or `opencode` when needed.
 sbx create --clone --name relay-codex codex /path/to/project
 sbx policy allow network --sandbox relay-codex localhost:8787
 ```
+
+OpenCode also needs its background-task feature enabled in every ordinary
+launch. Apply the checked-in Docker Sandbox kit when creating that sandbox:
+
+```bash
+sbx create --clone --name relay-opencode \
+  --kit /path/to/agent-relay/examples/opencode-background-subagents-kit \
+  opencode /path/to/project
+sbx policy allow network --sandbox relay-opencode localhost:8787
+```
+
+The kit sets `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in the sandbox
+environment. It is a client feature flag, not a relay credential.
 
 Docker documents the isolation difference in its
 [sandbox usage guide](https://docs.docker.com/ai/sandboxes/usage/#clone-mode).
@@ -89,7 +114,7 @@ Run this inside the sandbox:
 
 ```bash
 claude mcp add --transport http --scope user \
-  agent-relay http://host.docker.internal:8787/mcp
+  agent_relay http://host.docker.internal:8787/mcp
 ```
 
 See Claude Code's
@@ -100,6 +125,8 @@ See Claude Code's
 Merge [the OpenCode example](../examples/opencode.json) into the sandbox's
 `~/.config/opencode/opencode.json`. The format follows OpenCode's
 [remote MCP server reference](https://opencode.ai/docs/mcp-servers).
+The MCP entry must be named `agent_relay`. Confirm it with `opencode mcp list`;
+the result must show `agent_relay` connected.
 
 ## 4. Launch in automatic mode
 
@@ -125,27 +152,31 @@ Give the sandbox agent its assigned slug and the outside session's exact slug:
 ```text
 Use agent-relay for coordination. Register as relay-codex with agent kind codex
 and pass relay-codex as acting_slug. The outside session is host-coordinator.
-Read every pending inbox message before work and after meaningful milestones.
-Acknowledge a message only after processing it, and use reply_to_message for
-responses.
+Use the agent-relay-message skill. Read every pending inbox message, then keep
+exactly one background listener blocked in wait_for_messages. Acknowledge a
+message only after processing it, replace the listener after handling its
+complete result, and use reply_to_message for responses.
 ```
 
 The outside client uses the same configuration with
 `http://127.0.0.1:8787/mcp` and its own slug.
 
-## Push versus agent wakeup
+## Background delivery
 
-An active agent can call `read_inbox` through MCP and respond in either
-direction. A receiver may open
-`http://host.docker.internal:8787/v1/events`; the server wakes that SSE
-connection when a message is committed and does not poll SQLite.
+The listener subagent calls MCP `wait_for_messages`; the server holds that call
+without polling SQLite and returns every pending message when a send commits.
+The child returns the complete result without acknowledging it. The parent
+processes each message, acknowledges it, and starts one replacement listener.
 
-SSE alone does not start a new Codex, Claude Code, or OpenCode turn. Fully
-unattended reactions require a client-specific adapter that converts an SSE
-message into the client's supported turn-start or steering call, then
-acknowledges only after the client accepts it. The relay does not mount the host
-Docker socket, terminal-multiplexer socket, or agent-control socket into the
-sandbox.
+Codex keeps its parent turn active on the collaboration wait and uses a cheaper
+listener model when available. A user prompt can steer that running parent,
+which then continues waiting for the same child. OpenCode uses
+`task(background: true)` and its current model; the creation-time kit ensures
+the task form is present, and completion starts the parent handling turn.
+
+This path needs no Codex App Server, OpenCode HTTP API, Docker socket,
+terminal-multiplexer socket, or agent-control socket in the sandbox. Direct
+client-control receivers remain optional P2 integrations.
 
 ## Optional token authentication
 

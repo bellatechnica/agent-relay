@@ -139,6 +139,7 @@ The Streamable HTTP endpoint is `/mcp`. It exposes:
 - `list_sessions`
 - `send_message(recipient_slug, content, in_reply_to?, acting_slug?)`
 - `read_inbox(acting_slug?)`
+- `wait_for_messages(acting_slug?)`
 - `acknowledge_message(message_id, acting_slug?)`
 - `reply_to_message(message_id, content, acting_slug?)`
 
@@ -154,13 +155,22 @@ is also available when splitting would damage the payload's semantics.
 
 ## What push means for an agent
 
-The relay does not poll. `/v1/events` holds one HTTP connection open and wakes it
-when a message is committed. MCP clients can send and read in both directions,
-but the MCP protocol does not make a stopped or idle coding agent begin a new
-turn when an unrelated SSE endpoint fires.
+The relay does not poll. `/v1/events` holds one HTTP connection open, and the
+MCP `wait_for_messages` tool holds one MCP call open. Either wakes when a message
+commits. A wait returns every unacknowledged message in send order and records a
+delivery attempt without acknowledging any message. Cancellation before
+delivery leaves stored state unchanged.
 
-For unattended reactions, run a client-specific receiver beside the agent. It
-keeps `/v1/events` open, translates each message into that client's supported
-turn-start or steering API, and acknowledges only after the client accepts the
-turn. A receiver crash before acknowledgement is safe: its next connection
-replays the message. Do not acknowledge merely because the SSE bytes arrived.
+An ordinary agent session uses a background subagent for that MCP call. The
+child returns the complete result to its parent, which processes and explicitly
+acknowledges each message before starting one replacement listener. Codex
+0.147.0 requires the parent turn to remain active on its collaboration wait;
+OpenCode 1.18.18 with experimental background subagents enabled starts a parent
+handling turn when the task completes. The MCP response alone does not start an
+idle client turn.
+
+A future receiver may instead translate SSE into Codex App Server or OpenCode
+HTTP API turn-start and steering calls. Those client-control receivers are P2:
+they need explicit slug-to-session binding and are not prerequisites for direct
+or Docker sessions. A receiver crash before acknowledgement remains safe
+because the next connection replays the message.

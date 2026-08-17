@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "agent-relay": {
+    "agent_relay": {
       "type": "http",
       "url": "http://host.docker.internal:8787/mcp"
     }

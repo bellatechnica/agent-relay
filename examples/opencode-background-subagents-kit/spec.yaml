@@ -1,0 +1,8 @@
+schemaVersion: "2"
+kind: mixin
+name: opencode-background-subagents
+version: "1"
+description: Enable unattended OpenCode background listener tasks
+environment:
+  variables:
+    OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: "true"

@@ -56,11 +56,46 @@ When a response belongs to a received message, call `reply_to_message`; the
 relay derives the other participant. Use a new `send_message` only for a new
 thread or when the user explicitly addresses a different slug.
 
-## Delivery boundary
+## Maintain one listener
 
-Agent Relay does not start turns in idle agent clients. Read the inbox at prompt
-start, before a coordination wait, after meaningful milestones, and before
-reporting completion. Do not run an unbounded polling loop.
+After registration, call `read_inbox` once and process any pending messages.
+Then keep exactly one background listener for this slug:
+
+1. Start one background subagent whose only relay operation is one
+   `wait_for_messages` call with this session's identity.
+2. Have the child return the complete result without acknowledging anything.
+3. When the child finishes, handle every returned message in send order.
+4. Acknowledge each message only after its requested work or presentation is
+   complete. Use `reply_to_message` when the response belongs to that message.
+5. Start one replacement listener after all returned messages are handled.
+
+Do not start a second listener while one is active. Do not poll `read_inbox` or
+repeat short waits; the MCP wait remains blocked until a message arrives. A
+listener reports durable delivery, not completed processing.
+
+Use the control behavior supported by the current client:
+
+- **Codex:** spawn the listener with `gpt-5.6-luna` and low reasoning when that
+  model is available. Keep the parent turn active with the collaboration wait
+  until the child completes; repeat the wait if it returns while the child is
+  still running. A user prompt may steer the active turn: handle it, then
+  continue waiting for the same child. Do not return the parent to an idle
+  prompt while its listener is active because Codex 0.147.0 does not start a
+  parent turn when an already-detached child later finishes.
+- **OpenCode:** require
+  `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in the environment inherited
+  by the OpenCode process, then call `task` with `background: true`. Keep the
+  session's current model unless the user requests another. Do not use manual
+  `Ctrl+B` detachment as the listener mechanism.
+- **Claude Code:** use a background subagent and request a cheaper model only
+  when the active provider supports that model selection. Its completion may
+  return control to the parent when the client supports background completion
+  wake-up.
+
+The OpenCode and Claude Code parent may return to the prompt only after the
+client has demonstrated that background completion starts the handling turn.
+Otherwise use the Codex active-parent pattern. At prompt start and before
+reporting completion, read the inbox if listener state is absent or uncertain.
 
 If a relay call fails, report the operation, caller slug, recipient slug when
 applicable, and the returned error. Do not claim delivery and do not switch to

@@ -49,7 +49,7 @@ Add one user-scoped remote server:
 
 ```bash
 claude mcp add --transport http --scope user \
-  agent-relay http://127.0.0.1:8787/mcp
+  agent_relay http://127.0.0.1:8787/mcp
 ```
 
 Run `claude mcp list` to verify the connection, or use `/mcp` inside Claude
@@ -57,23 +57,25 @@ Code. See Claude Code's [MCP guide](https://code.claude.com/docs/en/mcp).
 
 ### OpenCode
 
-Merge this entry into `~/.config/opencode/opencode.json`:
+Add the remote server under the required MCP name:
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "agent-relay": {
-      "type": "remote",
-      "url": "http://127.0.0.1:8787/mcp",
-      "oauth": false
-    }
-  }
-}
+```bash
+opencode mcp add agent_relay --url http://127.0.0.1:8787/mcp
+opencode mcp list
 ```
 
-The format follows OpenCode's
-[remote MCP server reference](https://opencode.ai/docs/mcp-servers).
+Persist this client feature flag in the environment inherited by ordinary
+OpenCode launches:
+
+```bash
+export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
+```
+
+Put the export in the shell startup or environment configuration used to launch
+OpenCode; setting it for only one test command does not enable later sessions.
+The flag exposes `task(background: true)`, which the relay listener needs. The
+configuration format follows OpenCode's [remote MCP server
+reference](https://opencode.ai/docs/mcp-servers).
 
 Configuration listing proves only that the entry exists. Make a live
 `register_session` or `whoami` call before relying on the relay for a handoff.
@@ -102,16 +104,22 @@ useful first prompt is:
 ```text
 Use agent-relay for coordination. Register as host-implementer with agent kind
 codex and pass host-implementer as acting_slug. The other participant is
-host-coordinator. Read every pending inbox message before work and after each
-meaningful milestone. Acknowledge a message only after processing it. Use
-reply_to_message when a response belongs to a received message.
+host-coordinator. Use the agent-relay-message skill. Read every pending message,
+then maintain exactly one background listener with wait_for_messages.
+Acknowledge a message only after processing it, replace the listener after
+handling its complete result, and use reply_to_message for responses.
 ```
 
-The relay queues messages durably but does not start a new turn in an idle
-Codex, Claude Code, or OpenCode session. Interactive agents must call
-`read_inbox` at agreed checkpoints. For automatic turn injection, use a
-client-specific receiver as described in the
-[protocol reference](protocol.md#what-push-means-for-an-agent).
+The background listener blocks inside MCP without polling. Codex uses a cheaper
+listener subagent and keeps its parent turn active on the collaboration wait;
+user prompts can steer that running turn, after which it continues waiting for
+the same child. OpenCode uses `task(background: true)` and its current model;
+background completion starts the parent handling turn. Claude Code uses its
+background-task completion behavior when supported by the running client.
+
+Codex App Server and OpenCode's HTTP API are not required. Receivers built on
+those control APIs are optional P2 integrations described in the [protocol
+reference](protocol.md#what-push-means-for-an-agent).
 
 The `agent-relay-message` skill adds this discipline for skill-aware clients.
 The companion `handoff` workflow uses Agent Relay by default and includes both
