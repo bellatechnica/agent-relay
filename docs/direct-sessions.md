@@ -116,7 +116,9 @@ codex and pass host-implementer as acting_slug. The other participant is
 host-coordinator. Use the agent-relay-message skill. Read every pending message,
 then maintain exactly one background listener with wait_for_messages.
 Acknowledge a message only after processing it, replace the listener after
-handling its complete result, and use reply_to_message for responses.
+handling its complete result, and use reply_to_message for responses. Inspect
+recipient_waiting_at_send after every send or reply; false means the message is
+durable but no recipient MCP wait was observed.
 ```
 
 The background listener blocks inside MCP without polling. Codex uses a cheaper
@@ -132,8 +134,11 @@ reference](protocol.md#what-push-means-for-an-agent).
 
 The `agent-relay-message` skill adds this discipline for skill-aware clients.
 The companion `handoff` workflow uses Agent Relay by default and includes both
-slugs in the child prompt; tmux messaging is an explicit alternative rather
-than a silent fallback.
+slugs in the child prompt. When both sessions share a tmux server, a false
+`recipient_waiting_at_send` result triggers a tmux wake notice containing only
+the Relay message ID and recovery instruction. A true result uses no tmux
+message. Relay preflight failure may select tmux as the exclusive channel only
+when the fallback is available and reported to the user.
 
 ## 5. Verify two-way communication
 

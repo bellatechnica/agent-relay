@@ -107,6 +107,14 @@ def _message_payload(message: Message) -> dict[str, object]:
     return message.as_dict()
 
 
+def _sent_message_payload(
+    message: Message, recipient_waiting_at_send: bool
+) -> dict[str, object]:
+    payload = _message_payload(message)
+    payload["recipient_waiting_at_send"] = recipient_waiting_at_send
+    return payload
+
+
 def _record_delivery_attempts(
     store: RelayStore, recipient_session_id: str, messages: list[Message]
 ) -> list[Message]:
@@ -119,15 +127,15 @@ def _record_delivery_attempts(
 async def _wait_for_messages(
     store: RelayStore, hub: NotificationHub, recipient_session_id: str
 ) -> list[Message]:
-    wake_up = await hub.event_for(recipient_session_id)
-    while True:
-        wake_up.clear()
-        pending = store.unacknowledged_messages(recipient_session_id)
-        if pending:
-            return _record_delivery_attempts(
-                store, recipient_session_id, pending
-            )
-        await wake_up.wait()
+    async with hub.mcp_wait(recipient_session_id) as wake_up:
+        while True:
+            wake_up.clear()
+            pending = store.unacknowledged_messages(recipient_session_id)
+            if pending:
+                return _record_delivery_attempts(
+                    store, recipient_session_id, pending
+                )
+            await wake_up.wait()
 
 
 def create_app(
@@ -212,8 +220,13 @@ def create_app(
             _required_string(body, "content"),
             _optional_string(body, "in_reply_to"),
         )
-        await hub.notify(message.recipient_session_id)
-        return JSONResponse(_message_payload(message), status_code=201)
+        recipient_waiting_at_send = await hub.notify(
+            message.recipient_session_id
+        )
+        return JSONResponse(
+            _sent_message_payload(message, recipient_waiting_at_send),
+            status_code=201,
+        )
 
     async def read_inbox(request: Request) -> JSONResponse:
         recipient = _session_for_request(request, store, authentication_mode)
@@ -240,8 +253,13 @@ def create_app(
             request.path_params["message_id"],
             _required_string(body, "content"),
         )
-        await hub.notify(message.recipient_session_id)
-        return JSONResponse(_message_payload(message), status_code=201)
+        recipient_waiting_at_send = await hub.notify(
+            message.recipient_session_id
+        )
+        return JSONResponse(
+            _sent_message_payload(message, recipient_waiting_at_send),
+            status_code=201,
+        )
 
     async def events(request: Request) -> EventSourceResponse:
         recipient = _session_for_request(request, store, authentication_mode)
@@ -406,7 +424,7 @@ def _build_mcp_server(
         in_reply_to: str | None = None,
         acting_slug: str | None = None,
     ) -> dict[str, object]:
-        """Durably send the complete message to one exact recipient slug."""
+        """Send durably and report whether the recipient had an active MCP wait."""
         sender = acting_session(context, acting_slug)
         recipient = store.active_session_by_slug(recipient_slug)
         message = store.send_message(
@@ -415,8 +433,10 @@ def _build_mcp_server(
             content,
             in_reply_to=in_reply_to,
         )
-        await hub.notify(message.recipient_session_id)
-        return _message_payload(message)
+        recipient_waiting_at_send = await hub.notify(
+            message.recipient_session_id
+        )
+        return _sent_message_payload(message, recipient_waiting_at_send)
 
     @mcp.tool()
     def read_inbox(
@@ -458,10 +478,12 @@ def _build_mcp_server(
         context: Context,
         acting_slug: str | None = None,
     ) -> dict[str, object]:
-        """Reply to a message; the relay derives the other participant."""
+        """Reply durably and report whether the recipient had an active MCP wait."""
         sender = acting_session(context, acting_slug)
         message = store.reply_to_message(sender.session_id, message_id, content)
-        await hub.notify(message.recipient_session_id)
-        return _message_payload(message)
+        recipient_waiting_at_send = await hub.notify(
+            message.recipient_session_id
+        )
+        return _sent_message_payload(message, recipient_waiting_at_send)
 
     return mcp

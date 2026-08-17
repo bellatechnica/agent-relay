@@ -143,8 +143,10 @@ def test_none_mode_self_registration_and_http_round_trip(tmp_path):
     assert missing_identity.status_code == 422
     assert missing_identity.json()["error"]["code"] == "validation_failed"
     assert unknown_recipient.status_code == 404
+    assert sent["recipient_waiting_at_send"] is False
     assert [message["message_id"] for message in inbox] == [sent["message_id"]]
     assert reply["recipient_slug"] == "outside"
+    assert reply["recipient_waiting_at_send"] is False
     assert acknowledged["acknowledged_at"] is not None
     assert [message["message_id"] for message in outside_inbox] == [
         reply["message_id"]
@@ -222,8 +224,10 @@ def test_none_mode_mcp_tools_self_register_and_round_trip(tmp_path):
         "reply_to_message",
     }
     assert recovered_outside["session_id"] == outside["session_id"]
+    assert sent["recipient_waiting_at_send"] is False
     assert [message["message_id"] for message in inbox] == [sent["message_id"]]
     assert reply["recipient_slug"] == "outside"
+    assert reply["recipient_waiting_at_send"] is False
     assert acknowledged["acknowledged_at"] is not None
 
 
@@ -283,23 +287,13 @@ def test_mcp_wait_blocks_until_send_notifies_it(tmp_path):
         )
 
         async def scenario():
-            original_event_for = app.state.hub.event_for
-            wait_entered = asyncio.Event()
-
-            async def observed_event_for(session_id):
-                event = await original_event_for(session_id)
-                if session_id == recipient["session_id"]:
-                    wait_entered.set()
-                return event
-
-            app.state.hub.event_for = observed_event_for
             wait_task = asyncio.create_task(
                 app.state.mcp.call_tool(
                     "wait_for_messages", {"acting_slug": "recipient"}
                 )
             )
-            await wait_entered.wait()
             await asyncio.sleep(0)
+            assert await app.state.hub.is_mcp_waiting(recipient["session_id"])
             assert not wait_task.done()
 
             sent_result = await app.state.mcp.call_tool(
@@ -311,21 +305,107 @@ def test_mcp_wait_blocks_until_send_notifies_it(tmp_path):
                 },
             )
             waited_result = await wait_task
-            return sent_result.structured_content, waited_result.structured_content
+            reply_wait_task = asyncio.create_task(
+                app.state.mcp.call_tool(
+                    "wait_for_messages", {"acting_slug": "sender"}
+                )
+            )
+            await asyncio.sleep(0)
+            reply_result = await app.state.mcp.call_tool(
+                "reply_to_message",
+                {
+                    "acting_slug": "recipient",
+                    "message_id": sent_result.structured_content["message_id"],
+                    "content": "reply while waiting",
+                },
+            )
+            reply_waited_result = await reply_wait_task
+            return (
+                sent_result.structured_content,
+                waited_result.structured_content,
+                reply_result.structured_content,
+                reply_waited_result.structured_content,
+            )
 
-        sent, waited = asyncio.run(scenario())
+        sent, waited, reply, reply_waited = asyncio.run(scenario())
 
     assert sent is not None
     assert waited is not None
+    assert reply is not None
+    assert reply_waited is not None
+    assert sent["recipient_waiting_at_send"] is True
     assert [message["message_id"] for message in waited["messages"]] == [
         sent["message_id"]
     ]
     assert waited["messages"][0]["acknowledged_at"] is None
+    assert reply["recipient_waiting_at_send"] is True
+    assert [message["message_id"] for message in reply_waited["messages"]] == [
+        reply["message_id"]
+    ]
 
 
-def test_cancelling_mcp_wait_does_not_change_inbox(tmp_path):
+def test_mcp_send_observes_multiple_active_waits_until_they_return(tmp_path):
     app = create_app(tmp_path / "relay.sqlite3", None)
     with TestClient(app):
+        call_mcp(
+            app,
+            "register_session",
+            {"slug": "sender", "agent_kind": "codex"},
+        )
+        recipient = call_mcp(
+            app,
+            "register_session",
+            {"slug": "recipient", "agent_kind": "opencode"},
+        )
+
+        async def scenario():
+            wait_tasks = [
+                asyncio.create_task(
+                    app.state.mcp.call_tool(
+                        "wait_for_messages", {"acting_slug": "recipient"}
+                    )
+                )
+                for _ in range(2)
+            ]
+            await asyncio.sleep(0)
+            assert await app.state.hub.is_mcp_waiting(recipient["session_id"])
+
+            sent_result = await app.state.mcp.call_tool(
+                "send_message",
+                {
+                    "acting_slug": "sender",
+                    "recipient_slug": "recipient",
+                    "content": "wake every listener",
+                },
+            )
+            waited_results = await asyncio.gather(*wait_tasks)
+            assert not await app.state.hub.is_mcp_waiting(
+                recipient["session_id"]
+            )
+            return sent_result.structured_content, [
+                result.structured_content for result in waited_results
+            ]
+
+        sent, waited = asyncio.run(scenario())
+
+    assert sent is not None
+    assert sent["recipient_waiting_at_send"] is True
+    message_ids = []
+    for result in waited:
+        assert result is not None
+        [message] = result["messages"]
+        message_ids.append(message["message_id"])
+    assert message_ids == [sent["message_id"], sent["message_id"]]
+
+
+def test_cancelling_mcp_wait_clears_observation_without_changing_inbox(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None)
+    with TestClient(app):
+        call_mcp(
+            app,
+            "register_session",
+            {"slug": "sender", "agent_kind": "codex"},
+        )
         recipient = call_mcp(
             app,
             "register_session",
@@ -333,31 +413,40 @@ def test_cancelling_mcp_wait_does_not_change_inbox(tmp_path):
         )
 
         async def scenario():
-            original_event_for = app.state.hub.event_for
-            wait_entered = asyncio.Event()
-
-            async def observed_event_for(session_id):
-                event = await original_event_for(session_id)
-                if session_id == recipient["session_id"]:
-                    wait_entered.set()
-                return event
-
-            app.state.hub.event_for = observed_event_for
             wait_task = asyncio.create_task(
                 app.state.mcp.call_tool(
                     "wait_for_messages", {"acting_slug": "recipient"}
                 )
             )
-            await wait_entered.wait()
             await asyncio.sleep(0)
+            assert await app.state.hub.is_mcp_waiting(recipient["session_id"])
             assert not wait_task.done()
             wait_task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await wait_task
+            assert not await app.state.hub.is_mcp_waiting(
+                recipient["session_id"]
+            )
+            sent_result = await app.state.mcp.call_tool(
+                "send_message",
+                {
+                    "acting_slug": "sender",
+                    "recipient_slug": "recipient",
+                    "content": "after cancellation",
+                },
+            )
+            return sent_result.structured_content
 
-        asyncio.run(scenario())
+        sent = asyncio.run(scenario())
 
-    assert app.state.store.unacknowledged_messages(recipient["session_id"]) == []
+    assert sent is not None
+    assert sent["recipient_waiting_at_send"] is False
+    assert [
+        message.message_id
+        for message in app.state.store.unacknowledged_messages(
+            recipient["session_id"]
+        )
+    ] == [sent["message_id"]]
 
 
 def test_token_mode_mcp_identity_cannot_be_overridden(tmp_path):
@@ -431,12 +520,14 @@ def test_http_round_trip_is_durable_and_two_way(tmp_path):
         ).json()["messages"]
 
     assert [message["message_id"] for message in inbox] == [sent["message_id"]]
+    assert sent["recipient_waiting_at_send"] is False
     assert inbox[0]["first_delivery_attempt_at"] is not None
     assert acknowledged["acknowledged_at"] is not None
     assert [message["message_id"] for message in outside_inbox] == [
         reply["message_id"]
     ]
     assert reply["recipient_slug"] == outside["session"]["slug"]
+    assert reply["recipient_waiting_at_send"] is False
 
 
 def test_mcp_rejects_body_above_approved_boundary_without_storing_it(tmp_path):

@@ -61,7 +61,8 @@ exact slug, then instruct it to:
 4. Handle the returned messages, acknowledge after processing, and start one
    replacement listener.
 5. Call `send_message` with its `acting_slug` and the recipient's exact slug;
-   use `reply_to_message` when responding to a received message.
+   use `reply_to_message` when responding to a received message, and inspect the
+   returned `recipient_waiting_at_send` observation.
 
 Codex keeps its parent turn active on the collaboration wait while the cheaper
 listener subagent is blocked. OpenCode uses `task(background: true)` with its
@@ -69,8 +70,9 @@ current model and requires
 `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`. The
 [`agent-relay-message`](skills/agent-relay-message) skill contains the exact
 client rules. The `handoff` workflow includes both slugs and starts listeners
-on both sides. Agent Relay is its default communication channel; tmux messaging
-is used only when the user explicitly requests tmux mode.
+on both sides. Agent Relay is its default durable message channel. When a send
+reports that no recipient MCP wait was active, a local handoff uses tmux only to
+wake the recipient; the actionable content remains in Relay.
 
 Use [the direct-session guide](docs/direct-sessions.md) when the relay and
 agents share a host. Use [the Docker Sandbox guide](docs/docker-sandbox.md) to

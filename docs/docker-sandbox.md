@@ -156,7 +156,9 @@ and pass relay-codex as acting_slug. The outside session is host-coordinator.
 Use the agent-relay-message skill. Read every pending inbox message, then keep
 exactly one background listener blocked in wait_for_messages. Acknowledge a
 message only after processing it, replace the listener after handling its
-complete result, and use reply_to_message for responses.
+complete result, and use reply_to_message for responses. Inspect
+recipient_waiting_at_send after every send or reply; false means the message is
+durable but no recipient MCP wait was observed.
 ```
 
 The outside client uses the same configuration with
@@ -184,6 +186,13 @@ the task form is present, and completion starts the parent handling turn.
 This path needs no Codex App Server, OpenCode HTTP API, Docker socket,
 terminal-multiplexer socket, or agent-control socket in the sandbox. Direct
 client-control receivers remain optional P2 integrations.
+
+When a send across the sandbox boundary reports
+`recipient_waiting_at_send = false`, the sender reports that the message is
+queued and active wake-up is unverified. It must not expose a tmux socket to the
+sandbox or copy the actionable payload into another channel. A local host-to-host
+handoff may instead send the conditional tmux wake notice described in the
+[direct-session guide](direct-sessions.md#4-establish-the-two-way-workflow).
 
 ## Optional token authentication
 

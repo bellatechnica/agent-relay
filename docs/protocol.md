@@ -84,7 +84,7 @@ All request and response bodies are JSON except the SSE stream.
 | `POST /v1/sessions` | `none` mode only | Self-register and return a public session record |
 | `GET /v1/whoami` | Session token or acting-slug header | Acting session identity |
 | `GET /v1/sessions` | Session token in `token`; none in `none` | Every active session and exact ID |
-| `POST /v1/messages` | Session token or acting-slug header | Send a message |
+| `POST /v1/messages` | Session token or acting-slug header | Send a message and report the recipient MCP-wait observation |
 | `GET /v1/messages` | Session token or acting-slug header | Every unacknowledged inbox message |
 | `GET /v1/events` | Session token or acting-slug header | Live SSE notifications plus durable replay |
 | `POST /v1/messages/{message_id}/ack` | Recipient token or acting-slug header | Acknowledge a message |
@@ -110,6 +110,13 @@ curl --fail-with-body \
   -d "{\"recipient_slug\":\"$RECIPIENT_SLUG\",\"content\":\"inspect the failing test\"}" \
   http://127.0.0.1:8787/v1/messages
 ```
+
+Successful send and reply responses contain the stored message fields plus
+`recipient_waiting_at_send`. The field is `true` when the server observed one or
+more active recipient MCP `wait_for_messages` calls while notifying after the
+durable insert. It is `false` when no such call was active. The value is not
+stored, does not include Server-Sent Event connections, and does not claim that
+the recipient processed the message or later replaced its listener.
 
 Open the push stream from a non-browser receiver:
 
@@ -147,6 +154,11 @@ The `acting_slug` argument is omitted in `token` mode because the bearer token
 supplies it. It is required in `none` mode. Supplying a slug different from the
 bearer token's session is rejected in `token` mode.
 
+`send_message` and `reply_to_message` return
+`recipient_waiting_at_send` with the same semantics as the HTTP send and reply
+responses. A caller must use the boolean captured in that response rather than
+querying current listener state and introducing a second race.
+
 The MCP transport refuses request bodies above 4 MiB with HTTP 413 before a tool
 can run. No partial message is inserted. If one logical payload is larger, split
 it into messages whose content identifies the part and total, for example
@@ -160,6 +172,13 @@ MCP `wait_for_messages` tool holds one MCP call open. Either wakes when a messag
 commits. A wait returns every unacknowledged message in send order and records a
 delivery attempt without acknowledging any message. Cancellation before
 delivery leaves stored state unchanged.
+
+The server counts active MCP waits in memory. Registration and removal of a
+wait, observation by a send or reply, and notification use one lock. A wait is
+counted before its first inbox check and removed in cleanup when it returns,
+fails, or is cancelled. A server restart resets the count without changing the
+durable inbox. The complete state and interference model is documented in the
+[listener observation design](designs/listener-observation.md).
 
 Codex clients configure the `agent_relay` MCP server with
 `tool_timeout_sec = 86400`. That client-side deadline cancels one unchanged MCP
