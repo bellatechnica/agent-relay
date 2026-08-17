@@ -177,11 +177,14 @@ does not time out the wait. Messages committed during the replacement gap stay
 pending and return when the new wait begins. This deadline bounds the lifetime
 of one open client request, listener subagent, and active parent turn.
 
-Codex keeps its parent turn active on the collaboration wait and uses a cheaper
-listener model when available. A user prompt can steer that running parent,
-which then continues waiting for the same child. OpenCode uses
-`task(background: true)` and its current model; the creation-time kit ensures
-the task form is present, and completion starts the parent handling turn.
+As observed on 2026-08-17, Codex 0.147.0 keeps its parent turn active on the
+collaboration wait and uses a cheaper listener model when available. A user
+prompt can steer that running parent, which then continues waiting for the same
+child. OpenCode 1.18.18 uses `task(background: true)` and its current model; the
+creation-time kit ensures the task form is present, and completion starts the
+parent handling turn. The [protocol
+reference](protocol.md#what-push-means-for-an-agent) records the
+version-specific observation and the receiver alternatives.
 
 This path needs no Codex App Server, OpenCode HTTP API, Docker socket,
 terminal-multiplexer socket, or agent-control socket in the sandbox. Direct

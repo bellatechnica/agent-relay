@@ -45,12 +45,13 @@ In a running session, `/mcp` shows active servers. See the official
 [Codex MCP guide](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 `tool_timeout_sec = 86400` gives one blocking listener call a 24-hour client
-deadline. When it expires without a message, Codex reports the timeout and
-starts one replacement listener. The relay does not remove or acknowledge a
-message when the client cancels; a message committed during the replacement gap
-remains pending. The finite deadline limits how long one client request,
-listener subagent, and active parent turn remain open. Codex documents no
-unlimited value for this setting.
+deadline. When it expires without a message, the relay workflow reports the
+timeout and starts one replacement listener. The relay does not remove or
+acknowledge a message when the client cancels; a message committed during the
+replacement gap remains pending. The finite deadline limits how long one
+client request, listener subagent, and active parent turn remain open. As of
+2026-08-17, the Codex configuration reference defines this setting in seconds
+and documents no unlimited value.
 
 ### Claude Code
 
@@ -121,12 +122,15 @@ recipient_waiting_at_send after every send or reply; false means the message is
 durable but no recipient MCP wait was observed.
 ```
 
-The background listener blocks inside MCP without polling. Codex uses a cheaper
-listener subagent and keeps its parent turn active on the collaboration wait;
-user prompts can steer that running turn, after which it continues waiting for
-the same child. OpenCode uses `task(background: true)` and its current model;
+The background listener blocks inside MCP without polling. As observed on
+2026-08-17, Codex 0.147.0 uses a cheaper listener subagent and requires its
+parent turn to remain active on the collaboration wait; user prompts can steer
+that running turn, after which it continues waiting for the same child.
+OpenCode 1.18.18 uses `task(background: true)` and its current model;
 background completion starts the parent handling turn. Claude Code uses its
-background-task completion behavior when supported by the running client.
+background-task completion behavior when supported by the running client. The
+[protocol reference](protocol.md#what-push-means-for-an-agent) records the
+version-specific observation and the receiver alternatives.
 
 Codex App Server and OpenCode's HTTP API are not required. Receivers built on
 those control APIs are optional P2 integrations described in the [protocol

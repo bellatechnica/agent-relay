@@ -22,6 +22,18 @@ inbox reads. A server restart therefore does not lose pending messages.
 
 Python 3.12 or newer is required.
 
+This repository's default development setup uses the `agent-relay` conda
+environment through direnv:
+
+```bash
+conda create --name agent-relay python=3.12
+direnv allow
+direnv exec . python -m pip install -e .
+direnv exec . agent-relay
+```
+
+Alternatively, install into a conventional virtual environment:
+
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -e .
@@ -34,6 +46,15 @@ Senders address other agents by `recipient_slug`; no administrator or session
 token is required.
 
 Token authentication is an explicit opt-in:
+
+With the conda/direnv setup:
+
+```bash
+export AGENT_RELAY_ADMIN_TOKEN="$(openssl rand -hex 32)"
+direnv exec . agent-relay --authentication-mode token
+```
+
+With the virtual environment:
 
 ```bash
 export AGENT_RELAY_ADMIN_TOKEN="$(openssl rand -hex 32)"
@@ -64,10 +85,9 @@ exact slug, then instruct it to:
    use `reply_to_message` when responding to a received message, and inspect the
    returned `recipient_waiting_at_send` observation.
 
-Codex keeps its parent turn active on the collaboration wait while the cheaper
-listener subagent is blocked. OpenCode uses `task(background: true)` with its
-current model and requires
-`OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`. The
+The version-specific Codex and OpenCode listener behavior is recorded in the
+[protocol reference](docs/protocol.md#what-push-means-for-an-agent). OpenCode
+requires `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`. The
 [`agent-relay-message`](skills/agent-relay-message) skill contains the exact
 client rules. The `handoff` workflow includes both slugs and starts listeners
 on both sides. Agent Relay is its default durable message channel. When a send
