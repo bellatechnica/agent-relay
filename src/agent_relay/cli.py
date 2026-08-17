@@ -5,10 +5,37 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+from socket import socket
+from types import FrameType
 
 import uvicorn
 
-from .server import AUTHENTICATION_MODES, create_app
+from .server import AUTHENTICATION_MODES, RelayShutdown, create_app
+
+
+class RelayServer(uvicorn.Server):
+    """Tell Relay listeners to finish before Uvicorn drains connections."""
+
+    def __init__(
+        self,
+        config: uvicorn.Config,
+        relay_shutdown: RelayShutdown,
+    ) -> None:
+        super().__init__(config)
+        self._relay_shutdown = relay_shutdown
+
+    def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+        self._relay_shutdown.request()
+        super().handle_exit(sig, frame)
+
+    async def shutdown(self, sockets: list[socket] | None = None) -> None:
+        # Stop accepting before taking the active MCP transport snapshot.
+        for server in self.servers:
+            server.close()
+        for listening_socket in sockets or []:
+            listening_socket.close()
+        await self._relay_shutdown.finish()
+        await super().shutdown(sockets)
 
 
 def _default_database_path() -> Path:
@@ -72,4 +99,5 @@ def main() -> None:
         authentication_mode=arguments.authentication_mode,
         heartbeat_seconds=arguments.heartbeat_seconds,
     )
-    uvicorn.run(app, host=arguments.host, port=arguments.port)
+    config = uvicorn.Config(app, host=arguments.host, port=arguments.port)
+    RelayServer(config, app.state.shutdown).run()

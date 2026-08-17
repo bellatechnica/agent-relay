@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 from collections.abc import AsyncIterator
@@ -11,6 +12,8 @@ from typing import Any
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.server.subscriptions import ListenHandler
 from mcp.server.transport_security import TransportSecuritySettings
 from sse_starlette import EventSourceResponse
 from starlette.applications import Starlette
@@ -25,6 +28,7 @@ from .errors import (
     AuthorizationError,
     ConfigurationError,
     RelayError,
+    RelayUnavailableError,
     ValidationError,
 )
 from .hub import NotificationHub
@@ -41,6 +45,57 @@ MCP_ALLOWED_HOSTS = [
     "testserver:*",
 ]
 AUTHENTICATION_MODES = ("none", "token")
+
+
+class RelayShutdown:
+    """End Relay listeners and MCP transports before HTTP connection drain."""
+
+    def __init__(
+        self,
+        hub: NotificationHub,
+        mcp_session_manager: StreamableHTTPSessionManager,
+        subscription_listener: ListenHandler,
+    ) -> None:
+        self._hub = hub
+        self._mcp_session_manager = mcp_session_manager
+        self._subscription_listener = subscription_listener
+        self._requested = False
+
+    @classmethod
+    def for_mcp_server(
+        cls, hub: NotificationHub, mcp: MCPServer
+    ) -> RelayShutdown:
+        # MCP SDK 2.0 registers the modern subscription handler internally and
+        # does not expose a high-level shutdown method. The dependency is pinned.
+        handler_entry = mcp._lowlevel_server._request_handlers.get(
+            "subscriptions/listen"
+        )
+        if handler_entry is None or not isinstance(
+            handler_entry.handler, ListenHandler
+        ):
+            raise ConfigurationError(
+                "the MCP subscriptions/listen shutdown handler is unavailable"
+            )
+        return cls(hub, mcp.session_manager, handler_entry.handler)
+
+    def request(self) -> None:
+        if self._requested:
+            return
+        self._requested = True
+        self._hub.request_shutdown()
+        self._subscription_listener.close()
+
+    async def finish(self) -> None:
+        self.request()
+        # MCP SDK 2.0 exposes per-transport termination but no manager-wide
+        # pre-lifespan shutdown operation. The dependency is pinned, and this
+        # snapshot is intentionally every active transport rather than one.
+        active_transports = tuple(
+            self._mcp_session_manager._server_instances.values()
+        )
+        await asyncio.gather(
+            *(transport.terminate() for transport in active_transports)
+        )
 
 
 def _bearer_token(authorization: str | None) -> str:
@@ -129,6 +184,10 @@ async def _wait_for_messages(
 ) -> list[Message]:
     async with hub.mcp_wait(recipient_session_id) as wake_up:
         while True:
+            if hub.is_shutting_down:
+                raise RelayUnavailableError(
+                    "the relay is shutting down; reconnect and read the inbox"
+                )
             wake_up.clear()
             pending = store.unacknowledged_messages(recipient_session_id)
             if pending:
@@ -136,6 +195,44 @@ async def _wait_for_messages(
                     store, recipient_session_id, pending
                 )
             await wake_up.wait()
+
+
+async def _event_stream(
+    store: RelayStore, hub: NotificationHub, recipient_session_id: str
+) -> AsyncIterator[dict[str, str]]:
+    wake_up = await hub.event_for(recipient_session_id)
+    last_emitted_sequence = 0
+    while not hub.is_shutting_down:
+        wake_up.clear()
+        pending = store.unacknowledged_messages(recipient_session_id)
+        fresh = [
+            message
+            for message in pending
+            if message.sequence > last_emitted_sequence
+        ]
+        if fresh:
+            store.mark_delivery_attempt(
+                recipient_session_id,
+                (message.message_id for message in fresh),
+            )
+            refreshed_by_id = {
+                message.message_id: message
+                for message in store.unacknowledged_messages(
+                    recipient_session_id
+                )
+            }
+            for pending_message in fresh:
+                message = refreshed_by_id.get(pending_message.message_id)
+                if message is None:
+                    continue
+                last_emitted_sequence = message.sequence
+                yield {
+                    "event": "message",
+                    "id": str(message.sequence),
+                    "data": json.dumps(_message_payload(message)),
+                }
+            continue
+        await wake_up.wait()
 
 
 def create_app(
@@ -167,6 +264,7 @@ def create_app(
             allowed_origins=[],
         ),
     )
+    shutdown = RelayShutdown.for_mcp_server(hub, mcp)
 
     async def health(_: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
@@ -264,43 +362,8 @@ def create_app(
     async def events(request: Request) -> EventSourceResponse:
         recipient = _session_for_request(request, store, authentication_mode)
 
-        async def event_stream() -> AsyncIterator[dict[str, str]]:
-            wake_up = await hub.event_for(recipient.session_id)
-            last_emitted_sequence = 0
-            while True:
-                wake_up.clear()
-                pending = store.unacknowledged_messages(recipient.session_id)
-                fresh = [
-                    message
-                    for message in pending
-                    if message.sequence > last_emitted_sequence
-                ]
-                if fresh:
-                    store.mark_delivery_attempt(
-                        recipient.session_id,
-                        (message.message_id for message in fresh),
-                    )
-                    refreshed_by_id = {
-                        message.message_id: message
-                        for message in store.unacknowledged_messages(
-                            recipient.session_id
-                        )
-                    }
-                    for pending_message in fresh:
-                        message = refreshed_by_id.get(pending_message.message_id)
-                        if message is None:
-                            continue
-                        last_emitted_sequence = message.sequence
-                        yield {
-                            "event": "message",
-                            "id": str(message.sequence),
-                            "data": json.dumps(_message_payload(message)),
-                        }
-                    continue
-                await wake_up.wait()
-
         return EventSourceResponse(
-            event_stream(),
+            _event_stream(store, hub, recipient.session_id),
             ping=heartbeat_seconds,
             headers={
                 "Cache-Control": "no-cache",
@@ -353,6 +416,7 @@ def create_app(
     app.state.store = store
     app.state.hub = hub
     app.state.mcp = mcp
+    app.state.shutdown = shutdown
     app.state.authentication_mode = authentication_mode
     return app
 

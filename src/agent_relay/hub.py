@@ -1,4 +1,4 @@
-"""In-process wake-ups for live Server-Sent Event connections."""
+"""In-process listener observation and wake-ups."""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -9,7 +9,20 @@ class NotificationHub:
     def __init__(self) -> None:
         self._events: dict[str, asyncio.Event] = {}
         self._active_mcp_waits: dict[str, int] = {}
+        self._shutting_down = False
         self._lock = asyncio.Lock()
+
+    @property
+    def is_shutting_down(self) -> bool:
+        return self._shutting_down
+
+    def request_shutdown(self) -> None:
+        """Wake every listener and prevent new waits from blocking."""
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        for event in self._events.values():
+            event.set()
 
     def _event_for_locked(self, session_id: str) -> asyncio.Event:
         event = self._events.get(session_id)
@@ -20,7 +33,10 @@ class NotificationHub:
 
     async def event_for(self, session_id: str) -> asyncio.Event:
         async with self._lock:
-            return self._event_for_locked(session_id)
+            event = self._event_for_locked(session_id)
+            if self._shutting_down:
+                event.set()
+            return event
 
     @asynccontextmanager
     async def mcp_wait(self, session_id: str) -> AsyncIterator[asyncio.Event]:
@@ -41,10 +57,16 @@ class NotificationHub:
 
     async def is_mcp_waiting(self, session_id: str) -> bool:
         async with self._lock:
-            return self._active_mcp_waits.get(session_id, 0) > 0
+            return (
+                not self._shutting_down
+                and self._active_mcp_waits.get(session_id, 0) > 0
+            )
 
     async def notify(self, session_id: str) -> bool:
         async with self._lock:
-            recipient_waiting = self._active_mcp_waits.get(session_id, 0) > 0
+            recipient_waiting = (
+                not self._shutting_down
+                and self._active_mcp_waits.get(session_id, 0) > 0
+            )
             self._event_for_locked(session_id).set()
             return recipient_waiting

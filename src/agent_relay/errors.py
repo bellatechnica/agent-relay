@@ -36,3 +36,8 @@ class ValidationError(RelayError):
 class ConfigurationError(RelayError):
     status_code = 500
     code = "configuration_error"
+
+
+class RelayUnavailableError(RelayError):
+    status_code = 503
+    code = "temporarily_unavailable"

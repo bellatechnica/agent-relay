@@ -6,7 +6,13 @@ import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 from starlette.testclient import TestClient
 
-from agent_relay.server import MCP_MAX_REQUEST_BODY_BYTES, create_app
+from agent_relay.hub import NotificationHub
+from agent_relay.server import (
+    MCP_MAX_REQUEST_BODY_BYTES,
+    RelayShutdown,
+    _event_stream,
+    create_app,
+)
 
 
 ADMIN_TOKEN = "test-admin-token"
@@ -447,6 +453,115 @@ def test_cancelling_mcp_wait_clears_observation_without_changing_inbox(tmp_path)
             recipient["session_id"]
         )
     ] == [sent["message_id"]]
+
+
+def test_shutdown_ends_mcp_wait_and_sse_without_delivering_messages(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None)
+    with TestClient(app):
+        sender = call_mcp(
+            app,
+            "register_session",
+            {"slug": "sender", "agent_kind": "codex"},
+        )
+        recipient = call_mcp(
+            app,
+            "register_session",
+            {"slug": "recipient", "agent_kind": "claude"},
+        )
+
+        async def scenario():
+            wait_task = asyncio.create_task(
+                app.state.mcp.call_tool(
+                    "wait_for_messages", {"acting_slug": "recipient"}
+                )
+            )
+            stream = _event_stream(
+                app.state.store,
+                app.state.hub,
+                recipient["session_id"],
+            )
+            stream_task = asyncio.create_task(anext(stream))
+            await asyncio.sleep(0)
+            assert await app.state.hub.is_mcp_waiting(
+                recipient["session_id"]
+            )
+            assert not wait_task.done()
+            assert not stream_task.done()
+
+            stored_before_shutdown = app.state.store.send_message(
+                sender["session_id"],
+                recipient["session_id"],
+                "committed before shutdown",
+            )
+            app.state.hub.request_shutdown()
+            observed_after_shutdown = await app.state.hub.notify(
+                recipient["session_id"]
+            )
+
+            with pytest.raises(ToolError, match="relay is shutting down"):
+                await wait_task
+            with pytest.raises(StopAsyncIteration):
+                await stream_task
+            assert not await app.state.hub.is_mcp_waiting(
+                recipient["session_id"]
+            )
+
+            sent_after_shutdown = await app.state.mcp.call_tool(
+                "send_message",
+                {
+                    "acting_slug": "sender",
+                    "recipient_slug": "recipient",
+                    "content": "sent after shutdown",
+                },
+            )
+            return (
+                stored_before_shutdown,
+                observed_after_shutdown,
+                sent_after_shutdown.structured_content,
+            )
+
+        stored, observed, sent = asyncio.run(scenario())
+
+    assert observed is False
+    assert sent is not None
+    assert sent["recipient_waiting_at_send"] is False
+    pending = app.state.store.unacknowledged_messages(recipient["session_id"])
+    assert [message.message_id for message in pending] == [
+        stored.message_id,
+        sent["message_id"],
+    ]
+    assert all(message.first_delivery_attempt_at is None for message in pending)
+
+
+def test_shutdown_closes_modern_subscription_and_every_legacy_transport():
+    terminated = []
+    subscription_closes = []
+
+    class Transport:
+        def __init__(self, name):
+            self.name = name
+
+        async def terminate(self):
+            terminated.append(self.name)
+
+    manager = SimpleNamespace(
+        _server_instances={
+            "first": Transport("first"),
+            "second": Transport("second"),
+        }
+    )
+    subscription_listener = SimpleNamespace(
+        close=lambda: subscription_closes.append("closed")
+    )
+    hub = NotificationHub()
+    shutdown = RelayShutdown(hub, manager, subscription_listener)
+
+    asyncio.run(shutdown.finish())
+    shutdown.request()
+
+    assert terminated == ["first", "second"]
+    assert subscription_closes == ["closed"]
+    assert hub.is_shutting_down
 
 
 def test_token_mode_mcp_identity_cannot_be_overridden(tmp_path):
