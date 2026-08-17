@@ -17,6 +17,11 @@ The same workflow must operate between direct host sessions and sessions inside
 a Docker Sandbox. Docker sessions must retain the web-search and automatic-mode
 setup described in the [Docker Sandbox guide](docker-sandbox.md).
 
+An ordinary Codex or OpenCode session must not depend on a separately launched
+Codex App Server or OpenCode HTTP server to receive messages. A background
+listener subagent inside the session provides wake-up behavior through the
+relay's MCP tools.
+
 ## Identity and registration
 
 - The server defaults to unauthenticated slug mode, so the immediate workflow
@@ -72,7 +77,18 @@ slug's inbox, reply to a message, and acknowledge a processed message.
   agent-relay” must be sufficient for the agent to route the message by slug.
 - Provide an `agent-relay-message` skill for environments that support these
   skills. It must cover registration, sending, inbox reads, replies, and
-  acknowledgements with the same safety discipline as the MCP tools.
+  acknowledgements with the same safety discipline as the MCP tools. After
+  registration, it must start one background listener subagent when the client
+  supports background subagents.
+- A listener subagent waits for messages through MCP and finishes when messages
+  arrive. Its completion wakes the parent session. The parent reads and handles
+  every pending message, acknowledges each message only after processing it,
+  and then starts one replacement listener.
+- A Codex listener should use a cheaper available model because waiting does not
+  require the parent session's model capability. An OpenCode listener uses the
+  session's configured model unless the user requests a different one.
+- Starting a listener must not require a relay-specific wrapper, Codex App
+  Server, OpenCode HTTP server, or access to a Docker or tmux control socket.
 - Client-specific documentation must explain how to confirm that `agent_relay`
   appears in the client's MCP server list and how to distinguish configuration
   from a successful live tool call.
@@ -91,8 +107,9 @@ When the relay channel is selected, the spawning session must:
 3. Include the new session's slug and the spawning session's slug in the initial
    prompt.
 4. Instruct the new session to register its slug, read pending messages at the
-   start and at meaningful checkpoints, acknowledge only after processing, and
-   use replies when responding to a received message.
+   start, start its background listener, acknowledge only after processing, use
+   replies when responding to a received message, and replace the listener
+   after handling messages.
 5. Use the two slugs for clarifications, blocked-state notices, coordination
    signals, and completion reports that would otherwise travel through
    `tmux-message`.
@@ -105,15 +122,23 @@ server, including across a Docker Sandbox boundary.
 
 ## Delivery and wake-up boundary
 
-The relay server must not poll its SQLite database for new messages. It may hold
-a Server-Sent Events (SSE) connection open and wake it when a message is
-committed, as specified in the [protocol reference](protocol.md#what-push-means-for-an-agent).
+The relay server must not poll its SQLite database for new messages. Server-Sent
+Events (SSE) and MCP must offer blocking waits that use in-process notification
+when a message commits. If messages are already pending, a wait returns every
+pending message immediately in send order. Otherwise it remains blocked until a
+message arrives or the caller cancels it.
 
-An MCP message does not, by itself, start a new turn in an idle Codex, Claude
-Code, or OpenCode session. The immediate handoff workflow therefore requires
-agents to read their inboxes at prompt start and at meaningful checkpoints.
-Automatic turn injection requires a client-specific receiver and is outside the
-immediate slug-routing scope.
+Returning messages from a wait records a delivery attempt but does not
+acknowledge them. Cancelling a wait before delivery must not change stored
+message state. The server must not impose a timeout or message-count limit on a
+wait. Concurrent listeners for one slug may receive the same unacknowledged
+messages; a listener is notification, not an exclusive queue claim.
+
+An MCP response does not itself start a new model turn. The supported immediate
+wake mechanism is completion of a background listener subagent that made the
+blocking MCP call. The parent session remains responsible for reading the full
+inbox, processing it, acknowledging processed messages, and maintaining exactly
+one listener after handling completes.
 
 ## Deployment and security boundary
 
@@ -142,6 +167,20 @@ asked to handle private-key material directly. Replay handling, key rotation,
 credential lifetime, and admission control require separate design decisions
 before implementation.
 
+## Deferred client-control receivers (P2)
+
+Direct prompt injection through Codex App Server or the OpenCode HTTP API is an
+optional later optimization, not part of ordinary-session delivery. Such a
+receiver would need an explicit, exact binding between a relay slug and a client
+thread or session. It must not claim that MCP registration can discover or
+control an arbitrary client session.
+
+A Codex App Server receiver may start a turn while its bound thread is idle and
+steer the active turn while it is busy. An OpenCode receiver may submit an
+asynchronous prompt to its bound session. Neither receiver may become a
+prerequisite for direct-host or Docker messaging until its installation and
+session-binding workflow meets the ordinary-session requirements above.
+
 ## Acceptance checks
 
 The immediate implementation is acceptable only when all of these observations
@@ -164,7 +203,14 @@ hold:
 - Token-authenticated clients retain their existing sender authentication and
   cannot override it with a different acting identity.
 - A relay-based handoff prompt contains both assigned slugs, registration
-  instructions, inbox checkpoints, acknowledgement discipline, and the reply
-  instruction.
+  instructions, listener startup and replacement instructions,
+  acknowledgement discipline, and the reply instruction.
+- In ordinary Codex and OpenCode sessions, a background listener remains blocked
+  while its inbox is empty, completes after a relay message arrives, and wakes
+  its parent without terminal input or a client-control API.
+- A blocking MCP wait returns every message already pending, or blocks without
+  database polling until a send commits. Returned messages have a recorded
+  delivery attempt and remain unacknowledged.
+- Cancelling a blocking MCP wait before delivery leaves the inbox unchanged.
 - Direct-host and Docker documentation show the slug workflow without requiring
   a token in unauthenticated mode.
