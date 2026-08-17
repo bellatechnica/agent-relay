@@ -185,11 +185,13 @@ subagents and do not affect this field.
 
 On `SIGTERM` or `SIGINT`, the command-line server must mark the notification hub
 as shutting down before Uvicorn waits for open connections. That transition
-wakes every blocking MCP wait, `/v1/events` SSE stream, and MCP Streamable HTTP
-GET stream. MCP waits finish with a visible temporary-unavailability error,
-both stream types end, and none of those paths records a delivery attempt or
-acknowledgement merely because shutdown began. A send or reply that reaches
-notification after the transition reports
+wakes every blocking MCP wait, `/v1/events` SSE stream, and MCP transport-owned
+notification stream. That transport stream is a standalone GET in legacy MCP
+revisions and a `subscriptions/listen` POST in the modern revision. MCP waits
+finish with a visible temporary-unavailability error, every stream ends, and
+none of those paths records a delivery attempt or acknowledgement merely
+because shutdown began. A send or reply that reaches notification after the
+transition reports
 `recipient_waiting_at_send = false`. The managed service's stop timeout remains
 a last-resort process guard, not the ordinary way long-lived requests end.
 
@@ -291,9 +293,10 @@ hold:
   database polling until a send commits. Returned messages have a recorded
   delivery attempt and remain unacknowledged.
 - Cancelling a blocking MCP wait before delivery leaves the inbox unchanged.
-- With an MCP wait, a `/v1/events` SSE listener, and an MCP Streamable HTTP GET
-  stream open, one `SIGTERM` makes all three requests finish and lets the server
-  stop without reaching the managed service's stop timeout. A subsequent
-  process reads every message that was unacknowledged before shutdown.
+- With an MCP wait, a `/v1/events` SSE listener, and an MCP transport-owned
+  notification stream open, one `SIGTERM` makes all three requests finish and
+  lets the server stop without reaching the managed service's stop timeout. A
+  subsequent process reads every message that was unacknowledged before
+  shutdown.
 - Direct-host and Docker documentation show the slug workflow without requiring
   a token in unauthenticated mode.
