@@ -81,9 +81,17 @@ slug's inbox, reply to a message, and acknowledge a processed message.
   registration, it must start one background listener subagent when the client
   supports background subagents.
 - A listener subagent waits for messages through MCP and finishes when messages
-  arrive. Its completion wakes the parent session. The parent reads and handles
-  every pending message, acknowledges each message only after processing it,
-  and then starts one replacement listener.
+  arrive. The parent reads and handles every pending message, acknowledges each
+  message only after processing it, and then starts one replacement listener.
+- Codex must keep the parent turn active on its collaboration wait while the
+  listener is blocked. Codex 0.147.0 records a child that finishes after the
+  parent has returned to the prompt, but does not start a new parent turn to
+  handle that completion. The active parent wait must accept a user prompt
+  steered into the running turn and then continue waiting for the same listener.
+- OpenCode and Claude Code may return the parent to the prompt after launching
+  the listener when their background-task completion starts a parent turn. The
+  skill and handoff prompt must use the behavior verified for the running
+  client, rather than claiming idle-parent wake-up for every client.
 - A Codex listener should use a cheaper available model because waiting does not
   require the parent session's model capability. An OpenCode listener uses the
   session's configured model unless the user requests a different one.
@@ -141,9 +149,11 @@ messages; a listener is notification, not an exclusive queue claim.
 
 An MCP response does not itself start a new model turn. The supported immediate
 wake mechanism is completion of a background listener subagent that made the
-blocking MCP call. The parent session remains responsible for reading the full
-inbox, processing it, acknowledging processed messages, and maintaining exactly
-one listener after handling completes.
+blocking MCP call. A client that does not start a parent turn on background
+completion must keep the parent turn active on its own subagent wait. The parent
+session remains responsible for reading the full inbox, processing it,
+acknowledging processed messages, and maintaining exactly one listener after
+handling completes.
 
 ## Deployment and security boundary
 
@@ -210,10 +220,15 @@ hold:
 - A relay-based handoff prompt contains both assigned slugs, registration
   instructions, listener startup and replacement instructions,
   acknowledgement discipline, and the reply instruction.
-- In an ordinary Codex session and an OpenCode session with background tasks
-  enabled, a background listener remains blocked while its inbox is empty,
-  completes after a relay message arrives, and wakes its parent without terminal
-  input or a client-control API.
+- In an ordinary Codex session, a cheaper-model background listener remains
+  blocked while its inbox is empty; the parent remains in its collaboration
+  wait, accepts a second user prompt during that wait, and handles the exact
+  relay message after the listener completes without terminal-based message
+  injection or a client-control API.
+- In an ordinary OpenCode session with background tasks enabled, a listener
+  using the session's current model remains blocked while its inbox is empty,
+  completes after a relay message arrives, and starts the parent handling turn
+  without terminal-based message injection or a client-control API.
 - A blocking MCP wait returns every message already pending, or blocks without
   database polling until a send commits. Returned messages have a recorded
   delivery attempt and remain unacknowledged.
