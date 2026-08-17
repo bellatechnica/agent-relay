@@ -6,9 +6,13 @@ from dataclasses import dataclass, field
 @dataclass
 class RelayModel:
     active_mcp_waits: int = 0
+    active_sse_streams: int = 0
     pending_message_ids: list[str] = field(default_factory=list)
+    shutting_down: bool = False
 
     def start_wait(self) -> list[str] | None:
+        if self.shutting_down:
+            raise RuntimeError("relay is shutting down")
         self.active_mcp_waits += 1
         if not self.pending_message_ids:
             return None
@@ -29,13 +33,25 @@ class RelayModel:
         if message_id in self.pending_message_ids:
             raise AssertionError(f"duplicate message ID: {message_id}")
         self.pending_message_ids.append(message_id)
-        return self.active_mcp_waits > 0
+        return not self.shutting_down and self.active_mcp_waits > 0
+
+    def start_sse_stream(self) -> None:
+        if self.shutting_down:
+            raise RuntimeError("relay is shutting down")
+        self.active_sse_streams += 1
 
     def acknowledge(self, message_id: str) -> None:
         self.pending_message_ids.remove(message_id)
 
     def restart(self) -> None:
         self.active_mcp_waits = 0
+        self.active_sse_streams = 0
+        self.shutting_down = False
+
+    def begin_shutdown(self) -> None:
+        self.shutting_down = True
+        self.active_mcp_waits = 0
+        self.active_sse_streams = 0
 
 
 def run_scenarios() -> None:
@@ -77,7 +93,21 @@ def run_scenarios() -> None:
     assert replacement_gap.send("during-gap") is False
     assert replacement_gap.start_wait() == ["during-gap"]
 
+    signal_shutdown = RelayModel()
+    assert signal_shutdown.start_wait() is None
+    signal_shutdown.start_sse_stream()
+    assert signal_shutdown.send("before-shutdown") is True
+    signal_shutdown.begin_shutdown()
+    assert signal_shutdown.active_mcp_waits == 0
+    assert signal_shutdown.active_sse_streams == 0
+    assert signal_shutdown.pending_message_ids == ["before-shutdown"]
+    assert signal_shutdown.send("during-shutdown") is False
+    assert signal_shutdown.pending_message_ids == [
+        "before-shutdown",
+        "during-shutdown",
+    ]
+
 
 if __name__ == "__main__":
     run_scenarios()
-    print("6 listener-observation scenarios passed")
+    print("7 listener-observation scenarios passed")
