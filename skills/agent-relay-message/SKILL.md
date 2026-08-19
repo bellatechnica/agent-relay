@@ -5,8 +5,42 @@ description: Register a coding-agent session with Agent Relay and exchange durab
 
 # Message through Agent Relay
 
-Use the configured `agent_relay` Model Context Protocol (MCP) tools. Do not
-silently substitute tmux messaging when the relay is unavailable.
+## Require native MCP tools
+
+Use only the configured `agent_relay` Model Context Protocol (MCP) tools for
+Relay operations. Finding this `SKILL.md` on disk does not prove that the MCP
+server or its tools loaded into the current agent process.
+
+If the native tools are absent, stop and report the missing MCP setup. Do not
+generate a Python client, call the Relay REST API with `curl`, or use shell HTTP
+as a substitute. Do not silently substitute tmux messaging when Relay is
+unavailable.
+
+For Claude Code running in Docker Sandbox, the host must allow the sandbox
+network destination `localhost:8787`. The repeatable launcher workflow mounts
+one key-free MCP configuration from the host and passes its in-sandbox path to
+every model profile:
+
+```bash
+claude --mcp-config /path/in/sandbox/agent-relay.mcp.json
+```
+
+That JSON file defines `agent_relay` as an HTTP server at
+`http://host.docker.internal:8787/mcp` with an 86,400,000-millisecond timeout.
+The host copy survives sandbox deletion and supplies native tools to the first
+Claude process without mutable container setup.
+
+For an interactively maintained sandbox, this user-scoped command is an
+alternative:
+
+```bash
+claude mcp add --transport http --scope user \
+  agent_relay http://host.docker.internal:8787/mcp
+```
+
+Start a new Claude process after adding it. User-scoped configuration survives
+sandbox stops but is deleted with the sandbox. In both workflows, confirm
+through `/mcp` that `agent_relay` is connected before using this skill.
 
 ## Apply channel-independent message safety
 
@@ -97,6 +131,12 @@ replacement remains pending and returns when the replacement wait begins. This
 once-per-day replacement is recovery from the configured client deadline, not
 short-wait polling; any other repeated failure requires diagnosis instead of a
 retry loop.
+
+Configure Claude Code's `agent_relay` MCP server with a per-server
+`timeout = 86400000` milliseconds. Claude Code v2.1.203 and later use that
+wall-clock limit as the minimum idle window for the server. If an unchanged
+Claude wait reaches the 24-hour deadline, apply the same reporting and
+single-replacement behavior as for Codex without acknowledging a message.
 
 Use the control behavior supported by the current client:
 

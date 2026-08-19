@@ -208,6 +208,26 @@ handling completes.
 - The relay must work on host loopback and through Docker's
   `host.docker.internal` route without exposing a Docker or tmux control socket
   to the sandbox.
+- Docker Sandbox agents must use the configured `agent_relay` MCP server for
+  Relay operations. A missing native MCP tool is a visible setup failure; the
+  agent must not replace it with a generated Python script, direct REST calls,
+  or shell HTTP requests that bypass the client's MCP lifecycle.
+- A sandbox may receive a curated skill subset through a read-only additional
+  workspace. The documented Claude Code workflow must load a root containing
+  `.claude/skills/` with `--add-dir`, must expose only intentionally selected
+  skill copies, and must not require Docker's global read-write shared skill
+  store. Refreshing a selected skill from its authoritative source is an
+  explicit deployment action rather than implicit live access to every host
+  skill.
+- The machine-local Claude Code sandbox launcher must select model settings
+  from `~/.agents/models/<profile>/settings.json` and pass one shared, key-free
+  `~/.agents/sbx/agent-relay.mcp.json` file on every launch. A newly created
+  sandbox must therefore receive native `agent_relay` tools in its first agent
+  process without a prior `claude mcp add` bootstrap or dependence on mutable
+  container state. The shared `agent_relay` entry must set its MCP tool timeout
+  to 86,400,000 milliseconds (24 hours), matching the direct-client listener
+  policy and preventing Claude's five-minute MCP tool idle timeout from
+  cancelling an otherwise healthy long poll.
 - Unauthenticated slug mode must be the default and visibly documented as
   trusted-network operation. Token-authenticated mode must be an explicit
   opt-in and must retain its existing credential checks when selected.

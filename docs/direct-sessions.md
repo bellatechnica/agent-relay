@@ -55,15 +55,25 @@ and documents no unlimited value.
 
 ### Claude Code
 
-Add one user-scoped remote server:
+Add one user-scoped remote server with a 24-hour tool timeout. If an older
+`agent_relay` entry already exists at user scope, remove that entry before
+adding this replacement:
 
 ```bash
-claude mcp add --transport http --scope user \
-  agent_relay http://127.0.0.1:8787/mcp
+claude mcp add-json --scope user agent_relay \
+  '{"type":"http","url":"http://127.0.0.1:8787/mcp","timeout":86400000}'
 ```
 
 Run `claude mcp list` to verify the connection, or use `/mcp` inside Claude
 Code. See Claude Code's [MCP guide](https://code.claude.com/docs/en/mcp).
+
+Claude Code measures the per-server `timeout` in milliseconds. The
+`86400000` value gives one `wait_for_messages` call a 24-hour deadline and, on
+Claude Code v2.1.203 or later, raises that server's MCP tool idle window
+above the default 300 seconds. When the 24-hour deadline expires without a
+message, handle it like the Codex deadline: report the timeout and start one
+replacement listener. The relay leaves any concurrently committed message
+pending for that replacement.
 
 ### OpenCode
 
@@ -97,7 +107,7 @@ provides corresponding flags:
 
 ```bash
 codex --approve-for-me --search
-claude --permission-mode auto
+CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT=86400000 claude --permission-mode auto
 opencode --auto
 ```
 
@@ -105,6 +115,14 @@ opencode --auto
 requests through automatic review. Claude Code auto mode depends on the
 installed version, account, provider, and selected model. Avoid permission
 bypass flags on a host that has no outer sandbox.
+
+The launch-time `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` is a compatibility backstop
+for Claude Code v2.1.187 through v2.1.202, where the separate five-minute MCP
+idle watchdog is not floored by a per-server `timeout`. It applies to every MCP
+server in that Claude process; the `agent_relay` entry remains independently
+pinned to the same 24-hour wall-clock limit. Claude Code v2.1.203 and later use
+the per-server value as the minimum idle window, so the environment override is
+redundant but harmless there.
 
 ## 4. Establish the two-way workflow
 

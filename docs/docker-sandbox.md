@@ -25,9 +25,10 @@ for the Linux environment, then make `/dev/kvm` accessible to the account that
 runs Docker Sandbox. `sbx diagnose` can report a healthy daemon even when this
 microVM prerequisite is absent; the sandbox container then fails at startup.
 
-For a new local installation, initialize Docker Sandbox with its Balanced
-policy. It denies destinations by default while allowing common model-provider,
-package-manager, source-hosting, registry, and cloud-service endpoints:
+For a new local installation where network isolation is part of the security
+boundary, initialize Docker Sandbox with its Balanced policy. It denies
+destinations by default while allowing common model-provider, package-manager,
+source-hosting, registry, and cloud-service endpoints:
 
 ```bash
 sbx policy init balanced
@@ -38,19 +39,83 @@ See Docker's
 before replacing an existing policy. Organization governance can override local
 rules.
 
-Web search and page retrieval still need the destinations used by the selected
-agent or search provider. Exercise search once, inspect denied requests with
-`sbx policy log SANDBOX_NAME`, and allow each required domain explicitly:
+Balanced does not promise unrestricted web browsing. Web search and page
+retrieval can reach destinations outside its built-in set, including arbitrary
+result pages. Either exercise the browsing workflow, inspect denied requests
+with `sbx policy log SANDBOX_NAME`, and allow each required domain explicitly:
 
 ```bash
 sbx policy allow network --sandbox SANDBOX_NAME "search-provider.example:443"
 ```
 
-Avoid `sbx policy allow network "**"` when network isolation matters. Docker's
+or initialize the global Open policy when the agent must browse arbitrary web
+destinations:
+
+```bash
+sbx policy init allow-all
+```
+
+Open removes network allowlisting as a containment boundary. Avoid it when
+network isolation matters. Docker's
 [network troubleshooting guide](https://docs.docker.com/ai/sandboxes/troubleshooting/#agent-cant-install-packages-or-reach-an-api)
 explains how to identify blocked destinations.
 
-## 2. Create the sandbox without attaching
+## 2. Stage a curated Claude Code skill root
+
+Use a read-only additional workspace when a sandbox should receive selected
+skills instead of every skill installed on the host. Shape the mounted root the
+way Claude Code discovers additional-directory skills:
+
+```text
+/path/to/sandbox-skill-root/
+├── agent-relay.mcp.json
+└── .claude/
+    └── skills/
+        └── agent-relay-message/
+            ├── SKILL.md
+            └── agents/
+                └── openai.yaml
+```
+
+Copy each selected skill from its authoritative repository into this root.
+Refresh the copy after the authoritative skill changes; the mount is not an
+import or synchronization mechanism.
+
+Docker Sandbox mounts an additional workspace at its host-derived path and
+does not accept a separate container destination. Pass the mounted root to
+Claude Code with `--add-dir`; Claude discovers `.claude/skills/` beneath that
+root and watches an existing skill directory for changes. Append `:ro` to the
+host workspace argument so the sandbox cannot modify the curated copies.
+
+Create the sandbox with `--no-share-skills` when the curated root must be its
+only non-project skill source. That flag is fixed at sandbox creation. Docker's
+default shared skill store is read-write and global to participating
+sandboxes, so leaving it enabled creates a wider trust boundary than a curated
+read-only root. Docker documents the shared store and its trust boundary in
+[Share agent skills](https://docs.docker.com/ai/sandboxes/workflows/#share-agent-skills).
+
+On Windows, use the in-sandbox path printed while Docker resolves the
+workspace. For example, a host path on `D:` is normally visible below `/d/`
+inside the sandbox; a WSL path such as `/mnt/d/...` is not the path Claude sees.
+
+A machine-local launcher may keep model profiles and the curated sandbox root
+under one private directory:
+
+```text
+~/.agents/
+├── claude-sbx
+├── models/
+│   └── PROFILE/
+│       └── settings.json
+└── sbx/
+    ├── agent-relay.mcp.json
+    └── .claude/skills/
+```
+
+Put a symlink to `~/.agents/claude-sbx` in a directory on `PATH`; keep the
+launcher itself beside the machine-local profiles it manages.
+
+## 3. Create the sandbox without attaching
 
 Clone mode keeps the agent's Git writes in an isolated clone until the host
 fetches them. Replace `codex` with `claude` or `opencode` when needed.
@@ -58,6 +123,19 @@ fetches them. Replace `codex` with `claude` or `opencode` when needed.
 ```bash
 sbx create --clone --name relay-codex codex /path/to/project
 sbx policy allow network --sandbox relay-codex localhost:8787
+```
+
+For Claude Code with the curated skill root from the previous section, the
+profile launcher uses direct mode for the primary project workspace, so agent
+edits appear immediately in the host checkout. The model profile and curated
+skill root are separate read-only workspaces. Use clone mode instead when the
+project itself must be isolated from the host checkout.
+
+```bash
+sbx create --no-share-skills --name relay-claude \
+  claude /path/to/project /path/to/agents/models/PROFILE:ro \
+  /path/to/sandbox-skill-root:ro
+sbx policy allow network --sandbox relay-claude localhost:8787
 ```
 
 OpenCode also needs its background-task feature enabled in every ordinary
@@ -85,7 +163,7 @@ sbx exec relay-codex curl --fail \
 
 Continue only when the response is exactly `{"status":"ok"}`.
 
-## 3. Configure the relay MCP server
+## 4. Configure the relay MCP server
 
 All clients use Streamable HTTP at
 `http://host.docker.internal:8787/mcp`. The checked-in examples contain no
@@ -111,12 +189,42 @@ and [MCP guide](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 ### Claude Code
 
-Run this inside the sandbox:
+Put one key-free `agent-relay.mcp.json` at the root of the curated sandbox
+directory. Every model profile can use the same file because the Relay endpoint
+and listener timeout do not depend on the selected model:
 
-```bash
-claude mcp add --transport http --scope user \
-  agent_relay http://host.docker.internal:8787/mcp
+```json
+{
+  "mcpServers": {
+    "agent_relay": {
+      "type": "http",
+      "url": "http://host.docker.internal:8787/mcp",
+      "timeout": 86400000
+    }
+  }
+}
 ```
+
+Mount the profile directory and curated sandbox root read-only. Pass the
+profile's `settings.json` with `--settings`, the shared Relay file with
+`--mcp-config`, and the curated root with `--add-dir`. This supplies native
+Relay tools to the first Claude process and survives sandbox deletion because
+the configuration remains on the host. Claude accepts multiple
+`--mcp-config` paths, so callers may append other MCP files.
+
+Claude Code measures the per-server `timeout` in milliseconds. The
+`86400000` value gives one Relay listener call a 24-hour deadline and, on
+Claude Code v2.1.203 or later, raises this server's MCP tool idle window
+above the default 300 seconds.
+
+`claude mcp add --transport http --scope user agent_relay URL` remains useful
+for an interactively maintained sandbox. It writes mutable container state,
+requires a new Claude process, and is deleted by `sbx rm`; the launcher workflow
+does not depend on it.
+
+Use `/mcp` to confirm that `agent_relay` is connected and exposes its native
+tools. If those tools are absent, stop and repair the MCP configuration; do not
+generate a Python client or call the Relay REST API with `curl` as a substitute.
 
 See Claude Code's
 [MCP configuration guide](https://code.claude.com/docs/en/mcp).
@@ -129,14 +237,17 @@ Merge [the OpenCode example](../examples/opencode.json) into the sandbox's
 The MCP entry must be named `agent_relay`. Confirm it with `opencode mcp list`;
 the result must show `agent_relay` connected.
 
-## 4. Launch in automatic mode
+## 5. Launch in automatic mode
 
 Docker Sandbox starts Codex and Claude Code with their approval-bypass flags by
 default. OpenCode needs its explicit auto flag:
 
 ```bash
 sbx run --name relay-codex
-sbx run --name relay-claude
+sbx run --name relay-claude -- \
+  --settings /path/visible/in/sandbox/models/PROFILE/settings.json \
+  --mcp-config /path/visible/in/sandbox/sandbox-skill-root/agent-relay.mcp.json \
+  --add-dir /path/visible/in/sandbox/sandbox-skill-root
 sbx run --name relay-opencode -- --auto
 ```
 
@@ -145,8 +256,39 @@ Docker documents the default commands for
 [Codex](https://docs.docker.com/ai/sandboxes/agents/codex/#default-startup-command)
 and
 [Claude Code](https://docs.docker.com/ai/sandboxes/agents/claude-code/#default-startup-command).
-Automatic mode gives the agent broad control inside its microVM and workspace;
-clone mode and the network allowlist remain the containment boundaries.
+Automatic mode gives the agent broad control inside its microVM and workspace.
+Clone mode remains a filesystem containment boundary. The network allowlist is
+also a boundary under Balanced or a restrictive custom policy, but not under
+Open.
+
+### Preserve OSC 52 clipboard forwarding through tmux
+
+When `sbx` runs inside tmux, applications in an attached sandbox shell can set
+the outer terminal clipboard through OSC 52 only if tmux accepts application
+clipboard sequences:
+
+```tmux
+set -g set-clipboard on
+```
+
+`set-clipboard external` is insufficient for this direction: it lets tmux send
+clipboard updates to the terminal but does not let an application inside a pane
+set a tmux buffer. Reload the option in the current server after changing the
+configuration, and verify that `tmux info` reports an `Ms` terminal capability.
+
+Test the path from a directly attached sandbox shell, such as `sbx exec -it
+SANDBOX bash`. Output from a Claude Code Bash tool is captured by Claude before
+it is rendered and is not a transparent test of terminal control-sequence
+forwarding.
+
+If a named sandbox repeatedly fails to restart with an ext4 `/dev/vdb`
+input/output error or a read-only sandbox filesystem, the failure is in Docker
+Sandbox's private runtime storage rather than the agent command. Run
+`sbx diagnose`, then `sbx daemon restart` and retry. Docker's documented next
+recovery step, `sbx reset`, deletes every sandbox and shared skill state; do not
+use it until the state that must survive has been identified and preserved.
+See Docker's
+[sandbox troubleshooting guide](https://docs.docker.com/ai/sandboxes/troubleshooting/#restart-the-sandbox-daemon).
 
 Give the sandbox agent its assigned slug and the outside session's exact slug:
 
@@ -176,6 +318,11 @@ unchanged listener after 24 hours and starts one replacement; the relay server
 does not time out the wait. Messages committed during the replacement gap stay
 pending and return when the new wait begins. This deadline bounds the lifetime
 of one open client request, listener subagent, and active parent turn.
+
+Claude Code uses the equivalent per-server `timeout = 86400000` milliseconds.
+The same replacement-listener rule applies when that deadline expires. On
+Claude Code v2.1.203 and later, keep that value so the separate five-minute MCP
+idle watchdog cannot abort a healthy quiet listener.
 
 As observed on 2026-08-17, Codex 0.147.0 keeps its parent turn active on the
 collaboration wait and uses a cheaper listener model when available. A user
