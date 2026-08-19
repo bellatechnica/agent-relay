@@ -60,7 +60,7 @@ network isolation matters. Docker's
 [network troubleshooting guide](https://docs.docker.com/ai/sandboxes/troubleshooting/#agent-cant-install-packages-or-reach-an-api)
 explains how to identify blocked destinations.
 
-## 2. Stage a curated Claude Code skill root
+## 2. Stage a curated agent skill root
 
 Use a read-only additional workspace when a sandbox should receive selected
 skills instead of every skill installed on the host. Shape the mounted root the
@@ -104,16 +104,25 @@ under one private directory:
 ```text
 ~/.agents/
 ├── claude-sbx
+├── codex-sbx
 ├── models/
-│   └── PROFILE/
-│       └── settings.json
+│   ├── CLAUDE_PROFILE/
+│   │   └── settings.json
+│   └── CODEX_PROFILE/
+│       └── config.toml
 └── sbx/
     ├── agent-relay.mcp.json
     └── .claude/skills/
 ```
 
-Put a symlink to `~/.agents/claude-sbx` in a directory on `PATH`; keep the
-launcher itself beside the machine-local profiles it manages.
+Put symlinks to the launchers in a directory on `PATH`; keep the launchers
+themselves beside the machine-local profiles they manage. The Codex launcher
+copies its read-only host profile into the sandbox's writable `$CODEX_HOME` on
+first use, then preserves that local copy so Codex can record project trust and
+other interactive settings. It links selected skills from the mounted
+`.claude/skills/` directory into `$CODEX_HOME/skills/`. One curated skill copy
+therefore serves both clients; `.claude` is only the host-side discovery layout
+required by Claude Code.
 
 ## 3. Create the sandbox without attaching
 
@@ -125,13 +134,17 @@ sbx create --clone --name relay-codex codex /path/to/project
 sbx policy allow network --sandbox relay-codex localhost:8787
 ```
 
-For Claude Code with the curated skill root from the previous section, the
-profile launcher uses direct mode for the primary project workspace, so agent
-edits appear immediately in the host checkout. The model profile and curated
-skill root are separate read-only workspaces. Use clone mode instead when the
-project itself must be isolated from the host checkout.
+The profile launchers use direct mode for the primary project workspace, so
+agent edits appear immediately in the host checkout. The model profile and
+curated skill root are separate read-only workspaces. Use clone mode instead
+when the project itself must be isolated from the host checkout.
 
 ```bash
+sbx create --no-share-skills --name relay-codex \
+  codex /path/to/project /path/to/agents/models/CODEX_PROFILE:ro \
+  /path/to/sandbox-skill-root:ro
+sbx policy allow network --sandbox relay-codex localhost:8787
+
 sbx create --no-share-skills --name relay-claude \
   claude /path/to/project /path/to/agents/models/PROFILE:ro \
   /path/to/sandbox-skill-root:ro
@@ -171,8 +184,14 @@ credential or machine-specific secret.
 
 ### Codex
 
-Merge [the Codex example](../examples/codex-config.toml) into the sandbox's
-`~/.codex/config.toml`:
+The machine-local launcher seeds
+`$CODEX_HOME/PROFILE.config.toml` from
+`~/.agents/models/PROFILE/config.toml` on first use, then supplies the
+Relay settings below as command-line overrides on every run. The writable
+sandbox-local profile can record project trust and other interactive changes;
+later launches do not overwrite it from the host template. The profile file
+therefore holds model/provider preferences without duplicating the
+machine-independent Relay configuration:
 
 ```toml
 web_search = "live"
@@ -182,6 +201,15 @@ url = "http://host.docker.internal:8787/mcp"
 required = true
 tool_timeout_sec = 86400
 ```
+
+The launcher leaves `$CODEX_HOME` inside the sandbox writable and does not
+mount or copy the host's Codex credentials. Complete ChatGPT or API-key login
+inside the first session; for device-code login, run `codex login
+--device-auth` inside the sandbox. The resulting authentication cache and
+conversation state survive sandbox stop/start. Removing or resetting the
+sandbox deletes them. OpenAI documents the local cache, device-code flow, and
+Docker-container login alternatives in its
+[Codex authentication guide](https://learn.chatgpt.com/docs/auth).
 
 The configuration locations are defined in the official
 [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
@@ -212,6 +240,16 @@ Relay tools to the first Claude process and survives sandbox deletion because
 the configuration remains on the host. Claude accepts multiple
 `--mcp-config` paths, so callers may append other MCP files.
 
+The read-only `settings.json` is a command-line override layer, not a file that
+Claude must update. On Linux, Claude stores login credentials in
+`~/.claude/.credentials.json`; it uses separate writable files such as
+`~/.claude.json` and project-local settings for per-project trust, MCP state,
+permissions, and caches. The sandbox-home files persist with the sandbox, while
+project-local files persist with the directly mounted checkout. See Claude's
+[settings](https://code.claude.com/docs/en/settings) and
+[authentication](https://code.claude.com/docs/en/authentication) references for
+the current storage locations.
+
 Claude Code measures the per-server `timeout` in milliseconds. The
 `86400000` value gives one Relay listener call a 24-hour deadline and, on
 Claude Code v2.1.203 or later, raises this server's MCP tool idle window
@@ -239,11 +277,15 @@ the result must show `agent_relay` connected.
 
 ## 5. Launch in automatic mode
 
-Docker Sandbox starts Codex and Claude Code with their approval-bypass flags by
+Docker's Codex default startup command supplies
+`--dangerously-bypass-approvals-and-sandbox`, making Docker Sandbox the
+execution boundary; the launcher must not append another copy because Codex
+rejects that flag when repeated. The launcher additionally enables live web
+search. Docker Sandbox starts Claude Code with its approval-bypass flag by
 default. OpenCode needs its explicit auto flag:
 
 ```bash
-sbx run --name relay-codex
+codex-sbx PROFILE [CODEX_ARG ...]
 sbx run --name relay-claude -- \
   --settings /path/visible/in/sandbox/models/PROFILE/settings.json \
   --mcp-config /path/visible/in/sandbox/sandbox-skill-root/agent-relay.mcp.json \
@@ -251,7 +293,9 @@ sbx run --name relay-claude -- \
 sbx run --name relay-opencode -- --auto
 ```
 
-Create and configure a distinct named sandbox before each corresponding run.
+Create and configure a distinct named sandbox before using a manual `sbx run`
+command. A profile launcher performs that setup on first use and reuses the
+same named sandbox thereafter.
 Docker documents the default commands for
 [Codex](https://docs.docker.com/ai/sandboxes/agents/codex/#default-startup-command)
 and
@@ -260,6 +304,14 @@ Automatic mode gives the agent broad control inside its microVM and workspace.
 Clone mode remains a filesystem containment boundary. The network allowlist is
 also a boundary under Balanced or a restrictive custom policy, but not under
 Open.
+
+For `codex-sbx`, the first argument selects both the settings profile and the
+named sandbox. Every remaining argument is forwarded to Codex in its original
+order. Launching the same repository/profile pair again starts another Codex
+process in the existing sandbox; it does not create another sandbox. Give each
+process its own tmux window name, Codex session name, Relay slug, and editing
+worktree. Read-only processes may share the mounted repo root, exactly as for
+direct Codex sessions.
 
 ### Preserve OSC 52 clipboard forwarding through tmux
 

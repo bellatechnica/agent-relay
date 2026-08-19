@@ -227,7 +227,30 @@ handling completes.
   container state. The shared `agent_relay` entry must set its MCP tool timeout
   to 86,400,000 milliseconds (24 hours), matching the direct-client listener
   policy and preventing Claude's five-minute MCP tool idle timeout from
-  cancelling an otherwise healthy long poll.
+  cancelling an otherwise healthy long poll. The launcher must keep the host
+  settings file read-only: `--settings` is a command-line override layer, while
+  Claude writes authentication, project trust, and other mutable application
+  state to separate writable paths in the sandbox-local home or mounted
+  project.
+- The machine-local Codex sandbox launcher must select settings from
+  `~/.agents/models/<profile>/config.toml`, mount that file's directory
+  read-only, and seed a writable profile under the sandbox's `$CODEX_HOME` on
+  first use. Later launches must preserve that sandbox-local profile because
+  Codex writes project trust and other interactive settings there. The launcher
+  must not mount or copy the host's Codex authentication cache. The first Codex
+  process authenticates inside the sandbox, and the resulting credentials,
+  profile changes, and session state persist across sandbox stop/start but not
+  sandbox removal or reset.
+- Every Codex sandbox launch must enable live web search, run under Docker's
+  Codex default `--dangerously-bypass-approvals-and-sandbox` startup mode, and
+  configure the native `agent_relay` MCP server at
+  `http://host.docker.internal:8787/mcp` with an 86,400-second tool timeout. The
+  launcher must not append a second copy of Docker's bypass flag because Codex
+  rejects that duplicate. Arguments following the launcher profile must be
+  forwarded to Codex in their original order. The same repository and profile
+  reuse one named sandbox while each invocation starts a distinct Codex
+  process; each process still needs its own session name, Relay slug, and
+  editing worktree.
 - Unauthenticated slug mode must be the default and visibly documented as
   trusted-network operation. Token-authenticated mode must be an explicit
   opt-in and must retain its existing credential checks when selected.
