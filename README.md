@@ -5,8 +5,8 @@ the same host or across a Docker Sandbox boundary. Each session receives a relay
 identity and communicates through HTTP or the Model Context Protocol (MCP).
 Sessions self-register human-readable slugs by default; deployments that need
 caller authentication can opt into bearer-token mode. Server-Sent Events (SSE)
-and a blocking MCP inbox tool wake connected listeners without polling. A
-background listener subagent carries that result back into its agent session.
+and a blocking MCP inbox tool wake connected listeners without polling. Each
+session keeps one such call open and carries its result back into the session.
 
 ```text
 agent A ── HTTP/MCP ──> host relay <── HTTP/MCP ── agent B
@@ -77,17 +77,20 @@ exact slug, then instruct it to:
 1. Call `register_session(slug, agent_kind)` at startup or resume.
 2. Call `read_inbox` once, handle every pending message in send order, and
    acknowledge each only after processing it.
-3. Start one background subagent that calls `wait_for_messages` once and returns
-   the complete result without acknowledging it.
+3. Keep exactly one listener open: a single `wait_for_messages` call whose
+   complete result reaches the session unacknowledged. Claude Code issues that
+   call in its own turn and lets the client detach it; Codex and OpenCode use a
+   background subagent that returns the result verbatim.
 4. Handle the returned messages, acknowledge after processing, and start one
    replacement listener.
 5. Call `send_message` with its `acting_slug` and the recipient's exact slug;
    use `reply_to_message` when responding to a received message, and inspect the
    returned `recipient_waiting_at_send` observation.
 
-The version-specific Codex and OpenCode listener behavior is recorded in the
+The version-specific listener behavior of each client is recorded in the
 [protocol reference](docs/protocol.md#what-push-means-for-an-agent). OpenCode
-requires `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`. The
+requires `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`; a Claude Code that
+does not detach the call falls back to the subagent form. The
 [`agent-relay-message`](skills/agent-relay-message) skill contains the exact
 client rules. The `handoff` workflow includes both slugs and starts listeners
 on both sides. Agent Relay is its default durable message channel. When a send

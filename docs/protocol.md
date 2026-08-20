@@ -186,16 +186,44 @@ call after 24 hours; the relay server still imposes no wait timeout. The agent
 reports the timeout and starts exactly one replacement listener. A message that
 commits after cancellation and before replacement remains pending and returns
 as soon as the replacement wait begins. The 24-hour deadline therefore bounds
-the open client request, listener subagent, and active parent turn without
+the open client request and the session state held open around it without
 discarding message content or turning the server into a polling loop.
 
-An ordinary agent session uses a background subagent for that MCP call. The
-child returns the complete result to its parent, which processes and explicitly
-acknowledges each message before starting one replacement listener. Codex
-0.147.0 requires the parent turn to remain active on its collaboration wait;
-OpenCode 1.18.18 with experimental background subagents enabled starts a parent
-handling turn when the task completes. The MCP response alone does not start an
-idle client turn.
+Claude Code clients configure the same server with a per-server
+`timeout = 86400000` milliseconds, because that client otherwise aborts a call
+after 300 seconds without a response or progress notification, and a blocked
+`wait_for_messages` sends neither while the mailbox is quiet.
+
+An agent session holds that MCP call open in one of two ways. Where the client
+detaches a long-running MCP call by itself, the session issues the call in its
+own turn and the client delivers the completed call as a new turn carrying the
+tool result: an interactive Claude Code detaches a call that has not returned
+within 120 seconds and wakes the session that way, a behavior observed in
+v2.1.234 through v2.1.238 and one a client-side feature gate can disable.
+Otherwise the session spawns a background subagent whose only relay operation
+is that call, and the child returns the complete result to its parent rather
+than a summary of it. Codex 0.147.0 requires the parent turn to remain active
+on its collaboration wait; OpenCode 1.18.18 with experimental background
+subagents enabled starts a parent handling turn when the task completes. Either
+way the receiving session processes and explicitly acknowledges each message
+before starting one replacement listener. The MCP response alone does not start
+an idle client turn; the client has to convert the finished call into one.
+
+Detachment is a capability to confirm, not a release to assume: the version that
+introduced it is not established and a client-side feature gate can disable it,
+so the observable proof is the client's own notice that the call moved to the
+background. A session without that proof — an older client, a non-interactive
+run, or one with background tasks disabled — uses the subagent form, because an
+undetached call blocks the session's turn until a message arrives or the client
+deadline expires, and a blocked call cannot change mechanism without a user
+interrupt. The detachment delay is a session-wide client setting covering every
+MCP server; it bounds how long the turn blocks before detaching and never
+whether the wait survives, so no relay deployment needs it tuned.
+
+A listener that finishes carrying an empty result is not an empty mailbox. A
+wait ended by a closing client connection can report completion with no payload
+while every message stays pending, so a session reads the inbox rather than
+treating that result as nothing to handle.
 
 A future receiver may instead translate SSE into Codex App Server or OpenCode
 HTTP API turn-start and steering calls. Those client-control receivers are P2:

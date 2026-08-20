@@ -348,11 +348,11 @@ Give the sandbox agent its assigned slug and the outside session's exact slug:
 Use agent-relay for coordination. Register as relay-codex with agent kind codex
 and pass relay-codex as acting_slug. The outside session is host-coordinator.
 Use the agent-relay-message skill. Read every pending inbox message, then keep
-exactly one background listener blocked in wait_for_messages. Acknowledge a
-message only after processing it, replace the listener after handling its
-complete result, and use reply_to_message for responses. Inspect
-recipient_waiting_at_send after every send or reply; false means the message is
-durable but no recipient MCP wait was observed.
+exactly one listener blocked in wait_for_messages. Acknowledge a message only
+after processing it, replace the listener after handling its complete result,
+and use reply_to_message for responses. Inspect recipient_waiting_at_send after
+every send or reply; false means the message is durable but no recipient MCP
+wait was observed.
 ```
 
 The outside client uses the same configuration with
@@ -360,16 +360,17 @@ The outside client uses the same configuration with
 
 ## Background delivery
 
-The listener subagent calls MCP `wait_for_messages`; the server holds that call
-without polling SQLite and returns every pending message when a send commits.
-The child returns the complete result without acknowledging it. The parent
-processes each message, acknowledges it, and starts one replacement listener.
+A listener calls MCP `wait_for_messages`; the server holds that call without
+polling SQLite and returns every pending message when a send commits. Nothing is
+acknowledged while the wait is in flight. The session that receives the complete
+result processes each message, acknowledges it, and starts one replacement
+listener.
 
 Codex uses `tool_timeout_sec = 86400` for this MCP server. The client cancels an
 unchanged listener after 24 hours and starts one replacement; the relay server
 does not time out the wait. Messages committed during the replacement gap stay
 pending and return when the new wait begins. This deadline bounds the lifetime
-of one open client request, listener subagent, and active parent turn.
+of one open client request and the session state held open around it.
 
 Claude Code uses the equivalent per-server `timeout = 86400000` milliseconds.
 The same replacement-listener rule applies when that deadline expires. On
@@ -381,9 +382,14 @@ collaboration wait and uses a cheaper listener model when available. A user
 prompt can steer that running parent, which then continues waiting for the same
 child. OpenCode 1.18.18 uses `task(background: true)` and its current model; the
 creation-time kit ensures the task form is present, and completion starts the
-parent handling turn. The [protocol
+parent handling turn.
+
+An interactive Claude Code needs no subagent: it detaches the call itself and
+delivers the finished call as a turn carrying the tool result verbatim, so the
+sandbox session issues `wait_for_messages` in its own turn. The [protocol
 reference](protocol.md#what-push-means-for-an-agent) records the
-version-specific observation and the receiver alternatives.
+version-specific observation, how to confirm detachment, the subagent fallback,
+and the receiver alternatives.
 
 This path needs no Codex App Server, OpenCode HTTP API, Docker socket,
 terminal-multiplexer socket, or agent-control socket in the sandbox. Direct

@@ -114,12 +114,13 @@ thread or when the user explicitly addresses a different slug.
 ## Maintain one listener
 
 After registration, call `read_inbox` once and process any pending messages.
-Then keep exactly one background listener for this slug:
+Then keep exactly one listener for this slug:
 
-1. Start one background subagent whose only relay operation is one
-   `wait_for_messages` call with this session's identity.
-2. Have the child return the complete result without acknowledging anything.
-3. When the child finishes, handle every returned message in send order.
+1. Issue one `wait_for_messages` call with this session's identity, through the
+   client mechanism below.
+2. Deliver its complete result to the agent that handles it, and acknowledge
+   nothing while the wait is in flight.
+3. When the wait returns, handle every returned message in send order.
 4. Acknowledge each message only after its requested work or presentation is
    complete. Use `reply_to_message` when the response belongs to that message.
 5. Start one replacement listener after all returned messages are handled.
@@ -128,6 +129,11 @@ Do not start a second listener while one is active. Do not poll `read_inbox` or
 repeat short waits; the MCP wait remains blocked until a message arrives or the
 configured client deadline expires. A listener reports durable delivery, not
 completed processing.
+
+A blocked `wait_for_messages` sends no progress notification, so a client's
+silence limit is the only clock running on it. Raise that limit per server in
+every client before relying on a listener; a default measured in minutes ends
+the wait while the mailbox is merely quiet.
 
 Configure Codex's `agent_relay` MCP server with
 `tool_timeout_sec = 86400`. If an unchanged Codex wait reaches that 24-hour
@@ -141,9 +147,11 @@ retry loop.
 
 Configure Claude Code's `agent_relay` MCP server with a per-server
 `timeout = 86400000` milliseconds. Claude Code v2.1.203 and later use that
-wall-clock limit as the minimum idle window for the server. If an unchanged
-Claude wait reaches the 24-hour deadline, apply the same reporting and
-single-replacement behavior as for Codex without acknowledging a message.
+wall-clock limit as the minimum idle window for the server. Without it the call
+aborts after the client default of 300 seconds of silence, reporting that the
+server sent no response or progress. If an unchanged Claude wait reaches the
+24-hour deadline, apply the same reporting and single-replacement behavior as
+for Codex without acknowledging a message.
 
 Use the control behavior supported by the current client:
 
@@ -159,15 +167,46 @@ Use the control behavior supported by the current client:
   by the OpenCode process, then call `task` with `background: true`. Keep the
   session's current model unless the user requests another. Do not use manual
   `Ctrl+B` detachment as the listener mechanism.
-- **Claude Code:** use a background subagent and request a cheaper model only
-  when the active provider supports that model selection. Its completion may
-  return control to the parent when the client supports background completion
-  wake-up.
+- **Claude Code:** where the client detaches long-running MCP calls, call
+  `wait_for_messages` from the session's own turn and let it detach. An
+  interactive Claude Code moves an MCP call that has not returned within 120
+  seconds into a background task, reports that task's identifier, and returns
+  control to the session; the call keeps running, and its completion arrives as
+  a task notification whose body carries the tool result verbatim. A message
+  arriving before that cutoff returns inline in the same turn. Prefer this to a
+  subagent listener, whose result reaches the parent as child-written text
+  rather than the relay's own payload. Do not shorten the cutoff:
+  `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS` governs every MCP server in the session,
+  not `agent_relay` alone, and it bounds only how long the turn blocks before
+  detaching, never whether the wait survives.
 
-The OpenCode and Claude Code parent may return to the prompt only after the
-client has demonstrated that background completion starts the handling turn.
-Otherwise use the Codex active-parent pattern. At prompt start and before
-reporting completion, read the inbox if listener state is absent or uncertain.
+  Treat detachment as a capability to confirm, not a version to assume: a
+  feature gate can switch it off in any release. It is confirmed once this
+  session has seen the notice that a call moved to the background. It is absent
+  in a non-interactive run (`claude -p`) without `CLAUDE_AUTO_BACKGROUND_TASKS`
+  set, and in a session with background tasks disabled.
+
+  Use a background subagent listener whenever detachment is unconfirmed, and on
+  any older or unknown client. Without it the in-turn call blocks the session's
+  turn until a message arrives or the 24-hour deadline expires, and no queued
+  user prompt is handled meanwhile; a blocked call cannot switch mechanisms by
+  itself, so a user interrupt is what ends it. A notice that has not appeared
+  roughly two minutes into the call means this client does not detach. Such a
+  subagent's only relay operation is one `wait_for_messages` call, and it
+  returns the complete result without acknowledging anything.
+
+A finished listener carrying an empty result is not an empty mailbox. A wait
+whose client connection closes — an exiting session, a restarted relay — can
+report completion with no payload while every pending message stays pending.
+Read the inbox rather than treating that as nothing to handle.
+
+An OpenCode parent may return to the prompt only after that client has
+demonstrated that background completion starts the handling turn; otherwise use
+the Codex active-parent pattern. A Claude Code parent may return to the prompt
+once the client has confirmed detachment of its listener, because a completed
+background MCP task starts a turn carrying the result. At prompt start and
+before reporting completion, read the inbox if listener state is absent or
+uncertain.
 
 If a relay call fails, report the operation, caller slug, recipient slug when
 applicable, and the returned error. Do not claim delivery. An ambiguous send

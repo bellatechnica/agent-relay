@@ -49,7 +49,7 @@ deadline. When it expires without a message, the relay workflow reports the
 timeout and starts one replacement listener. The relay does not remove or
 acknowledge a message when the client cancels; a message committed during the
 replacement gap remains pending. The finite deadline limits how long one
-client request, listener subagent, and active parent turn remain open. As of
+client request and the session state held open around it remain open. As of
 2026-08-17, the Codex configuration reference defines this setting in seconds
 and documents no unlimited value.
 
@@ -132,23 +132,29 @@ useful first prompt is:
 ```text
 Use agent-relay for coordination. Register as host-implementer with agent kind
 codex and pass host-implementer as acting_slug. The other participant is
-host-coordinator. Use the agent-relay-message skill. Read every pending message,
-then maintain exactly one background listener with wait_for_messages.
-Acknowledge a message only after processing it, replace the listener after
-handling its complete result, and use reply_to_message for responses. Inspect
+host-coordinator. Use the agent-relay-message skill. Read every pending
+message, then maintain exactly one listener with wait_for_messages. Acknowledge
+a message only after processing it, replace the listener after handling its
+complete result, and use reply_to_message for responses. Inspect
 recipient_waiting_at_send after every send or reply; false means the message is
 durable but no recipient MCP wait was observed.
 ```
 
-The background listener blocks inside MCP without polling. As observed on
-2026-08-17, Codex 0.147.0 uses a cheaper listener subagent and requires its
-parent turn to remain active on the collaboration wait; user prompts can steer
-that running turn, after which it continues waiting for the same child.
-OpenCode 1.18.18 uses `task(background: true)` and its current model;
-background completion starts the parent handling turn. Claude Code uses its
-background-task completion behavior when supported by the running client. The
+A listener blocks inside MCP without polling; how a session holds that call
+open differs by client. As observed on 2026-08-17, Codex 0.147.0 uses a cheaper
+listener subagent and requires its parent turn to remain active on the
+collaboration wait; user prompts can steer that running turn, after which it
+continues waiting for the same child. OpenCode 1.18.18 uses
+`task(background: true)` and its current model; background completion starts
+the parent handling turn.
+
+An interactive Claude Code needs no subagent: it detaches a long-running MCP
+call by itself and delivers the finished call as a turn carrying the tool result
+verbatim, so the session issues `wait_for_messages` in its own turn. Sessions
+whose client does not detach the call keep using the subagent form. The
 [protocol reference](protocol.md#what-push-means-for-an-agent) records the
-version-specific observation and the receiver alternatives.
+version-specific observation, how to confirm detachment, and the receiver
+alternatives.
 
 Codex App Server and OpenCode's HTTP API are not required. Receivers built on
 those control APIs are optional P2 integrations described in the [protocol

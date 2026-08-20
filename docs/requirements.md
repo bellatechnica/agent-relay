@@ -18,9 +18,9 @@ a Docker Sandbox. Docker sessions must retain the web-search and automatic-mode
 setup described in the [Docker Sandbox guide](docker-sandbox.md).
 
 An ordinary Codex or OpenCode session must not depend on a separately launched
-Codex App Server or OpenCode HTTP server to receive messages. A background
-listener subagent inside the session provides wake-up behavior through the
-relay's MCP tools.
+Codex App Server or OpenCode HTTP server to receive messages. A listener blocked
+in the relay's MCP wait, held inside the session itself, provides wake-up
+behavior.
 
 ## Identity and registration
 
@@ -83,11 +83,15 @@ slug's inbox, reply to a message, and acknowledge a processed message.
 - Provide an `agent-relay-message` skill for environments that support these
   skills. It must cover registration, sending, inbox reads, replies, and
   acknowledgements with the same safety discipline as the MCP tools. After
-  registration, it must start one background listener subagent when the client
-  supports background subagents.
-- A listener subagent waits for messages through MCP and finishes when messages
-  arrive. The parent reads and handles every pending message, acknowledges each
-  message only after processing it, and then starts one replacement listener.
+  registration, it must maintain exactly one listener through the mechanism
+  verified for the running client.
+- A listener is one blocked `wait_for_messages` call that finishes when messages
+  arrive. The session receiving its complete result reads and handles every
+  pending message, acknowledges each message only after processing it, and then
+  starts one replacement listener. A listener carrying an empty result is not an
+  empty mailbox: a wait ended by a closing client connection can report
+  completion with no payload while every message stays pending, so the session
+  reads the inbox rather than treating that result as nothing to handle.
 - Codex must configure the `agent_relay` MCP server with
   `tool_timeout_sec = 86400`. This client-side deadline ends an unchanged wait
   after 24 hours; it does not remove or acknowledge a relay message. The parent
@@ -101,10 +105,29 @@ slug's inbox, reply to a message, and acknowledge a processed message.
   parent has returned to the prompt, but does not start a new parent turn to
   handle that completion. The active parent wait must accept a user prompt
   steered into the running turn and then continue waiting for the same listener.
-- OpenCode and Claude Code may return the parent to the prompt after launching
-  the listener when their background-task completion starts a parent turn. The
-  skill and handoff prompt must use the behavior verified for the running
-  client, rather than claiming idle-parent wake-up for every client.
+- Claude Code must configure the `agent_relay` MCP server with a per-server
+  `timeout = 86400000` milliseconds; without it the call aborts at that client's
+  silence default while the mailbox is merely quiet. Where the client detaches
+  long-running MCP calls, the listener is one `wait_for_messages` call issued in
+  the session's own turn rather than a subagent.
+- No relay deployment may require the client's detachment delay to be tuned. It
+  is a session-wide setting covering every MCP server, and it bounds how long
+  the turn blocks before detaching, never whether the wait survives.
+- Detachment is a capability the session must confirm from the client's own
+  notice rather than infer from a release number, because the version that
+  introduced it is not established and a feature gate can disable it. A
+  background subagent listener is the required fallback wherever that proof is
+  absent, including older clients and non-interactive runs; an undetached call
+  blocks the session's turn until a message arrives. The
+  [protocol reference](protocol.md#what-push-means-for-an-agent) holds the
+  observed behavior and version range.
+- A subagent listener must return the complete `wait_for_messages` result to its
+  parent without acknowledging anything, because a child-written summary is not
+  the relay's payload.
+- OpenCode may return the parent to the prompt after launching the listener when
+  its background-task completion starts a parent turn. The skill and handoff
+  prompt must use the behavior verified for the running client, rather than
+  claiming idle-parent wake-up for every client.
 - A Codex listener should use a cheaper available model because waiting does not
   require the parent session's model capability. An OpenCode listener uses the
   session's configured model unless the user requests a different one.
@@ -134,7 +157,7 @@ When the relay channel is selected, the spawning session must:
 3. Include the new session's slug and the spawning session's slug in the initial
    prompt.
 4. Instruct the new session to register its slug, read pending messages at the
-   start, start its background listener, acknowledge only after processing, use
+   start, start exactly one listener, acknowledge only after processing, use
    replies when responding to a received message, and replace the listener
    after handling messages.
 5. Use the two slugs for clarifications, blocked-state notices, coordination
@@ -180,8 +203,8 @@ fails, or is cancelled. A server restart therefore begins with no observed
 waits while retaining every durable message. `send_message` and
 `reply_to_message` return `recipient_waiting_at_send = true` exactly when one or
 more waits were observable for the recipient at notification time; otherwise
-they return `false`. Server-Sent Event connections are not MCP listener
-subagents and do not affect this field.
+they return `false`. Server-Sent Event connections are not MCP waits and do not
+affect this field.
 
 On `SIGTERM` or `SIGINT`, the command-line server must mark the notification hub
 as shutting down before Uvicorn waits for open connections. That transition
@@ -195,13 +218,13 @@ transition reports
 `recipient_waiting_at_send = false`. The managed service's stop timeout remains
 a last-resort process guard, not the ordinary way long-lived requests end.
 
-An MCP response does not itself start a new model turn. The supported immediate
-wake mechanism is completion of a background listener subagent that made the
-blocking MCP call. A client that does not start a parent turn on background
-completion must keep the parent turn active on its own subagent wait. The parent
-session remains responsible for reading the full inbox, processing it,
-acknowledging processed messages, and maintaining exactly one listener after
-handling completes.
+An MCP response does not itself start a new model turn; the client must turn the
+finished call into one. Two client behaviors do that: delivery of a detached MCP
+call's completion as a new turn, and completion of a background subagent that
+made the blocking call. A client offering neither must keep the parent turn
+active on its own wait. The session remains responsible for reading the full
+inbox, processing it, acknowledging processed messages, and maintaining exactly
+one listener after handling completes.
 
 ## Deployment and security boundary
 
@@ -332,6 +355,11 @@ hold:
   using the session's current model remains blocked while its inbox is empty,
   completes after a relay message arrives, and starts the parent handling turn
   without terminal-based message injection or a client-control API.
+- In an ordinary Claude Code session with the per-server timeout configured, a
+  `wait_for_messages` call issued in the session's own turn is detached by the
+  client, leaves the session free at its prompt, and after a relay message
+  arrives starts a handling turn carrying that message's own payload rather than
+  a summary of it.
 - A blocking MCP wait returns every message already pending, or blocks without
   database polling until a send commits. Returned messages have a recorded
   delivery attempt and remain unacknowledged.
