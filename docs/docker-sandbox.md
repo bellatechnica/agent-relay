@@ -98,31 +98,44 @@ On Windows, use the in-sandbox path printed while Docker resolves the
 workspace. For example, a host path on `D:` is normally visible below `/d/`
 inside the sandbox; a WSL path such as `/mnt/d/...` is not the path Claude sees.
 
-A machine-local launcher may keep model profiles and the curated sandbox root
-under one private directory:
+## 2b. Launch through the repository's launchers
 
-```text
-~/.agents/
-├── claude-sbx
-├── codex-sbx
-├── models/
-│   ├── CLAUDE_PROFILE/
-│   │   └── settings.json
-│   └── CODEX_PROFILE/
-│       └── config.toml
-└── sbx/
-    ├── agent-relay.mcp.json
-    └── .claude/skills/
+`scripts/claude-sbx` and `scripts/codex-sbx` create the sandbox on first use
+and start the agent in it thereafter. Both work from any workspace, not only
+from this repository, and neither needs anything installed beyond `sbx`:
+
+```bash
+claude-sbx [--profile-dir DIR] [CLAUDE_ARG ...]
+codex-sbx  [--profile-dir DIR] [CODEX_ARG ...]
 ```
 
-Put symlinks to the launchers in a directory on `PATH`; keep the launchers
-themselves beside the machine-local profiles they manage. The Codex launcher
-copies its read-only host profile into the sandbox's writable `$CODEX_HOME` on
-first use, then preserves that local copy so Codex can record project trust and
-other interactive settings. It links selected skills from the mounted
-`.claude/skills/` directory into `$CODEX_HOME/skills/`. One curated skill copy
-therefore serves both clients; `.claude` is only the host-side discovery layout
-required by Claude Code.
+Symlink them into a directory on `PATH`; each resolves its own checkout, so
+the symlink target keeps working. The sandbox mounts the current workspace
+read-write and this checkout read-only, and the launcher takes both the Relay
+MCP configuration (`examples/claude-mcp.json`) and the skill
+(`skills/agent-relay-message`) from that read-only mount. It then links the
+skill into the agent's own skill directory inside the sandbox —
+`~/.claude/skills/` for Claude Code, `$CODEX_HOME/skills/` for Codex — so
+discovery does not depend on which workspace the sandbox was created for.
+
+`--profile-dir` is optional. Point it at a directory holding `settings.json`
+for Claude Code or `config.toml` for Codex, and the launcher mounts that
+directory read-only and selects the file. Without it, the sandbox runs the
+agent on its own defaults and mounts nothing extra. Keep such profiles in a
+directory of your own; pointing `--profile-dir` at the host agent home
+(`~/.claude`, `~/.codex`) mounts credentials and session history into the
+sandbox, and the launchers warn when you do.
+
+The sandbox is named `<agent>-<workspace>`, or `<agent>-<profile>-<workspace>`
+when a profile directory was given, so one workspace can hold one sandbox per
+profile. The name carries the workspace basename, not its full path: two
+different directories with the same basename share one sandbox and therefore
+its original mounts. Check `sbx ls` and rename or recreate when that is not
+what you want.
+
+The launchers run on native Linux and under WSL against the Windows Docker
+Sandboxes build; only the latter needs host and in-sandbox path conversion,
+and a path that cannot be converted is refused by name rather than guessed.
 
 ## 3. Create the sandbox without attaching
 
@@ -184,14 +197,13 @@ credential or machine-specific secret.
 
 ### Codex
 
-The machine-local launcher seeds
-`$CODEX_HOME/PROFILE.config.toml` from
-`~/.agents/models/PROFILE/config.toml` on first use, then supplies the
-Relay settings below as command-line overrides on every run. The writable
-sandbox-local profile can record project trust and other interactive changes;
-later launches do not overwrite it from the host template. The profile file
-therefore holds model/provider preferences without duplicating the
-machine-independent Relay configuration:
+`codex --profile NAME` layers `$CODEX_HOME/NAME.config.toml` over the base
+config, so `scripts/codex-sbx` seeds that file once from the profile directory
+it was given and passes the Relay settings below as command-line overrides on
+every run. The writable sandbox-local copy can record project trust and other
+interactive changes; later launches do not overwrite it from the host
+template. A profile file therefore holds model and provider preferences
+without duplicating the machine-independent Relay configuration:
 
 ```toml
 web_search = "live"
@@ -233,12 +245,12 @@ and listener timeout do not depend on the selected model:
 }
 ```
 
-Mount the profile directory and curated sandbox root read-only. Pass the
-profile's `settings.json` with `--settings`, the shared Relay file with
-`--mcp-config`, and the curated root with `--add-dir`. This supplies native
-Relay tools to the first Claude process and survives sandbox deletion because
-the configuration remains on the host. Claude accepts multiple
-`--mcp-config` paths, so callers may append other MCP files.
+`scripts/claude-sbx` passes this file with `--mcp-config`, taken from its own
+read-only checkout mount, and adds `--settings` when a profile directory was
+given. Relay tools therefore reach the first Claude process, and survive
+sandbox deletion because the configuration lives on the host. Claude accepts
+multiple `--mcp-config` paths, so callers may append other MCP files after the
+launcher's own arguments.
 
 The read-only `settings.json` is a command-line override layer, not a file that
 Claude must update. On Linux, Claude stores login credentials in
@@ -285,17 +297,14 @@ search. Docker Sandbox starts Claude Code with its approval-bypass flag by
 default. OpenCode needs its explicit auto flag:
 
 ```bash
-codex-sbx PROFILE [CODEX_ARG ...]
-sbx run --name relay-claude -- \
-  --settings /path/visible/in/sandbox/models/PROFILE/settings.json \
-  --mcp-config /path/visible/in/sandbox/sandbox-skill-root/agent-relay.mcp.json \
-  --add-dir /path/visible/in/sandbox/sandbox-skill-root
+codex-sbx --profile-dir /path/to/profile
+claude-sbx --profile-dir /path/to/profile
 sbx run --name relay-opencode -- --auto
 ```
 
-Create and configure a distinct named sandbox before using a manual `sbx run`
-command. A profile launcher performs that setup on first use and reuses the
-same named sandbox thereafter.
+The two launchers create and configure their named sandbox on first use and
+reuse it thereafter. A manual `sbx run` needs that sandbox to exist and be
+configured already.
 Docker documents the default commands for
 [Codex](https://docs.docker.com/ai/sandboxes/agents/codex/#default-startup-command)
 and
@@ -305,10 +314,11 @@ Clone mode remains a filesystem containment boundary. The network allowlist is
 also a boundary under Balanced or a restrictive custom policy, but not under
 Open.
 
-For `codex-sbx`, the first argument selects both the settings profile and the
-named sandbox. Every remaining argument is forwarded to Codex in its original
-order. Launching the same repository/profile pair again starts another Codex
-process in the existing sandbox; it does not create another sandbox. Give each
+`--profile-dir` selects both the profile file and the profile segment of the
+sandbox name; every argument the launcher does not consume is forwarded to the
+agent in its original order. Launching the same workspace and profile again
+starts another agent process in the existing sandbox; it does not create
+another sandbox. Give each
 process its own tmux window name, Codex session name, Relay slug, and editing
 worktree. Read-only processes may share the mounted repo root, exactly as for
 direct Codex sessions.

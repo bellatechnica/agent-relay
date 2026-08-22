@@ -235,43 +235,52 @@ one listener after handling completes.
   Relay operations. A missing native MCP tool is a visible setup failure; the
   agent must not replace it with a generated Python script, direct REST calls,
   or shell HTTP requests that bypass the client's MCP lifecycle.
-- A sandbox may receive a curated skill subset through a read-only additional
-  workspace. The documented Claude Code workflow must load a root containing
-  `.claude/skills/` with `--add-dir`, must expose only intentionally selected
-  skill copies, and must not require Docker's global read-write shared skill
-  store. Refreshing a selected skill from its authoritative source is an
-  explicit deployment action rather than implicit live access to every host
-  skill.
-- The machine-local Claude Code sandbox launcher must select model settings
-  from `~/.agents/models/<profile>/settings.json` and pass one shared, key-free
-  `~/.agents/sbx/agent-relay.mcp.json` file on every launch. A newly created
-  sandbox must therefore receive native `agent_relay` tools in its first agent
-  process without a prior `claude mcp add` bootstrap or dependence on mutable
-  container state. The shared `agent_relay` entry must set its MCP tool timeout
-  to 86,400,000 milliseconds (24 hours), matching the direct-client listener
-  policy and preventing Claude's five-minute MCP tool idle timeout from
-  cancelling an otherwise healthy long poll. The launcher must keep the host
-  settings file read-only: `--settings` is a command-line override layer, while
-  Claude writes authentication, project trust, and other mutable application
-  state to separate writable paths in the sandbox-local home or mounted
-  project.
-- The machine-local Codex sandbox launcher must select settings from
-  `~/.agents/models/<profile>/config.toml`, mount that file's directory
-  read-only, and seed a writable profile under the sandbox's `$CODEX_HOME` on
-  first use. Later launches must preserve that sandbox-local profile because
-  Codex writes project trust and other interactive settings there. The launcher
-  must not mount or copy the host's Codex authentication cache. The first Codex
-  process authenticates inside the sandbox, and the resulting credentials,
-  profile changes, and session state persist across sandbox stop/start but not
-  sandbox removal or reset.
+- A sandbox must receive only intentionally selected skills, never Docker's
+  global read-write shared skill store. Refreshing a selected skill from its
+  authoritative source is an explicit deployment action rather than implicit
+  live access to every host skill.
+- The repository must ship sandbox launchers for Claude Code and Codex rather
+  than describe machine-local ones it does not contain. A launcher must run
+  from any workspace, not only from this repository, and must give a newly
+  created sandbox native `agent_relay` tools in its first agent process without
+  a prior `claude mcp add` bootstrap or dependence on mutable container state.
+- A launcher must mount its own checkout read-only and take the Relay skill and
+  the shared, key-free MCP configuration from that mount, so a sandbox created
+  for an unrelated workspace still receives both. It must link the skill into
+  the agent's own skill directory inside the sandbox, because skill discovery
+  cannot depend on which workspace the sandbox was created for.
+- The shared `agent_relay` MCP entry must set its tool timeout to 86,400,000
+  milliseconds (24 hours), matching the direct-client listener policy and
+  preventing Claude's five-minute MCP tool idle timeout from cancelling an
+  otherwise healthy long poll.
+- A profile directory is optional. When one is given, the launcher mounts it
+  read-only and selects it — `settings.json` passed to Claude Code with
+  `--settings`, `config.toml` seeded once into the sandbox's `$CODEX_HOME` as
+  the layer `codex --profile` reads. Without one, the sandbox runs the agent on
+  its own defaults and mounts nothing extra. A launcher must never mount the
+  host agent home, which holds credentials and session history.
+- The host profile file stays read-only: it is a command-line override layer,
+  while each agent writes authentication, project trust and other mutable state
+  to its own writable paths in the sandbox-local home or the mounted workspace.
+  Later launches must preserve the sandbox-local Codex profile copy rather than
+  overwrite it from the host template. Sandbox-local credentials and session
+  state persist across sandbox stop/start but not removal or reset.
+- Sandbox identity must be `<agent>-<workspace>`, gaining a `<profile>` segment
+  when a profile directory was given, so one workspace holds one sandbox per
+  profile. Launchers must accept that identity colliding for two different
+  directories with the same basename rather than encoding a full host path.
+- Launchers must run unchanged on native Linux and under WSL against the
+  Windows Docker Sandboxes build, converting host and in-sandbox paths only for
+  the latter. A path that cannot be mapped must be refused with the path named,
+  never guessed.
 - Every Codex sandbox launch must enable live web search, run under Docker's
   Codex default `--dangerously-bypass-approvals-and-sandbox` startup mode, and
   configure the native `agent_relay` MCP server at
   `http://host.docker.internal:8787/mcp` with an 86,400-second tool timeout. The
   launcher must not append a second copy of Docker's bypass flag because Codex
-  rejects that duplicate. Arguments following the launcher profile must be
-  forwarded to Codex in their original order. The same repository and profile
-  reuse one named sandbox while each invocation starts a distinct Codex
+  rejects that duplicate. Every argument the launcher does not consume itself
+  must be forwarded to Codex in its original order. The same workspace and
+  profile reuse one named sandbox while each invocation starts a distinct Codex
   process; each process still needs its own session name, Relay slug, and
   editing worktree.
 - Unauthenticated slug mode must be the default and visibly documented as

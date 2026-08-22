@@ -16,26 +16,15 @@ generate a Python client, call the Relay REST API with `curl`, or use shell HTTP
 as a substitute. Do not silently substitute tmux messaging when Relay is
 unavailable.
 
-For Codex running in Docker Sandbox, the repeatable `codex-sbx` launcher
-supplies the `agent_relay` MCP URL and 86,400-second tool timeout as command-line
-configuration on every run. It also links this curated skill into the
-sandbox-local `$CODEX_HOME/skills/` directory. Do not copy host Codex
-credentials into the sandbox; authenticate inside its first session. Confirm
-that the native Relay tools are present before depending on them.
-
-For Claude Code running in Docker Sandbox, the host must allow the sandbox
-network destination `localhost:8787`. The repeatable launcher workflow mounts
-one key-free MCP configuration from the host and passes its in-sandbox path to
-every model profile:
-
-```bash
-claude --mcp-config /path/in/sandbox/agent-relay.mcp.json
-```
-
-That JSON file defines `agent_relay` as an HTTP server at
-`http://host.docker.internal:8787/mcp` with an 86,400,000-millisecond timeout.
-The host copy survives sandbox deletion and supplies native tools to the first
-Claude process without mutable container setup.
+For either client running in Docker Sandbox, the Agent Relay repository ships
+the launchers `scripts/codex-sbx` and `scripts/claude-sbx`. Each mounts its own
+checkout read-only, supplies the `agent_relay` server from that mount — as
+command-line configuration for Codex, as a key-free `--mcp-config` file for
+Claude Code, both carrying the 24-hour tool timeout — and links this skill into
+the sandbox-local skill directory. The host must allow the sandbox network
+destination `localhost:8787`. Do not copy host credentials into the sandbox;
+authenticate inside its first session. Confirm that the native Relay tools are
+present before depending on them.
 
 For an interactively maintained sandbox, this user-scoped command is an
 alternative:
