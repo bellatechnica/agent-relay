@@ -29,9 +29,14 @@ if [[ "$relay_root" != "$workspace_dir" ]]; then
 else
     sandbox_relay_root=$(relay_sandbox_path "$workspace_dir")
 fi
-settings_args=()
+# Claude Code's --mcp-config takes a space-separated list, so it swallows any
+# following argument that does not start with a dash — a bare prompt included.
+# --settings takes exactly one value, so emitting it immediately after ends the
+# list. With no profile it carries an empty object, which layers over the
+# sandbox's own settings without replacing them.
+settings_value='{}'
 if [[ -n "$profile_file" ]]; then
-    settings_args=(--settings "$(relay_sandbox_path "$profile_file")")
+    settings_value=$(relay_sandbox_path "$profile_file")
 fi
 
 # Sandbox identity is the agent, the profile name when one was given, and the
@@ -53,6 +58,6 @@ relay_link_skill "$sandbox_name" "$sandbox_home/.claude/skills" \
     "$sandbox_relay_root/skills/agent-relay-message"
 
 exec sbx run --name "$sandbox_name" claude -- \
-    "${settings_args[@]}" \
     --mcp-config "$sandbox_relay_root/examples/claude-mcp.json" \
+    --settings "$settings_value" \
     "${relay_agent_args[@]}"
