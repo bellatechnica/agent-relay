@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Launch Claude Code in a Docker Sandbox with native Agent Relay tools.
+#
+# The sandbox mounts the current workspace read-write and this Agent Relay
+# checkout read-only; the relay mount supplies both the MCP configuration and
+# the skill, so the launcher works from any workspace, not only from this
+# repository. A profile directory is mounted read-only when one is given;
+# without it Claude Code runs on its own defaults.
+
+AGENT_KIND=claude
+PROFILE_FILE_NAME=settings.json
+# shellcheck source=scripts/sbx-common.sh
+. "$(dirname -- "$(readlink -f -- "$0")")/sbx-common.sh"
+
+relay_parse_args "$@"
+relay_resolve_workspace
+relay_resolve_root
+relay_detect_path_mode
+
+sandbox_name=$(relay_sandbox_name)
+
+mounts=("$(relay_host_path "$workspace_dir")")
+if [[ -n "$profile_dir" ]]; then
+    mounts+=("$(relay_host_path "$profile_dir"):ro")
+fi
+if [[ "$relay_root" != "$workspace_dir" ]]; then
+    mounts+=("$(relay_host_path "$relay_root"):ro")
+    sandbox_relay_root=$(relay_sandbox_path "$relay_root")
+else
+    sandbox_relay_root=$(relay_sandbox_path "$workspace_dir")
+fi
+settings_args=()
+if [[ -n "$profile_file" ]]; then
+    settings_args=(--settings "$(relay_sandbox_path "$profile_file")")
+fi
+
+# Sandbox identity is the agent, the profile name when one was given, and the
+# workspace basename, so one profile keeps one sandbox per workspace. Re-running this launcher for the
+# same pair starts another agent process in the existing sandbox rather than
+# replacing the first: every process shares that sandbox's VM, mounts,
+# services and credentials, so concurrent writers need separate checkouts.
+# The identity does not include the workspace's full host path, so a different
+# directory with the same basename reuses the first sandbox's mounts. Inspect
+# `sbx ls` and rename or recreate when that is not what you want.
+if ! relay_sandbox_exists "$sandbox_name"; then
+    sbx create --no-share-skills --name "$sandbox_name" \
+        claude "${mounts[@]}"
+    sbx policy allow network --sandbox "$sandbox_name" localhost:8787
+fi
+
+sandbox_home=$(relay_sandbox_env "$sandbox_name" HOME /root)
+relay_link_skill "$sandbox_name" "$sandbox_home/.claude/skills" \
+    "$sandbox_relay_root/skills/agent-relay-message"
+
+exec sbx run --name "$sandbox_name" claude -- \
+    "${settings_args[@]}" \
+    --mcp-config "$sandbox_relay_root/examples/claude-mcp.json" \
+    "${relay_agent_args[@]}"
