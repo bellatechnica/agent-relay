@@ -14,6 +14,10 @@ CLAUDE.local.md
 # Codex
 .codex/worktrees/
 
+# Machine-local values and secrets
+.env
+*.local
+
 # Project-specific
 **/do_not_commit/
 
