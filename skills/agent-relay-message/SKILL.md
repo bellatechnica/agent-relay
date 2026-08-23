@@ -142,6 +142,13 @@ server sent no response or progress. If an unchanged Claude wait reaches the
 24-hour deadline, apply the same reporting and single-replacement behavior as
 for Codex without acknowledging a message.
 
+Configure OpenCode's `agent_relay` MCP server with a per-server
+`timeout` of 86400000 milliseconds, or set `experimental.mcp_timeout` once for
+every server. Without it OpenCode falls back to its MCP client library's
+60-second per-request default and cancels a listener whose mailbox is merely
+quiet. An expired OpenCode deadline is handled like the other two: report it
+and start exactly one replacement listener without acknowledging a message.
+
 Use the control behavior supported by the current client:
 
 - **Codex:** spawn the listener with `gpt-5.6-luna` and low reasoning when that

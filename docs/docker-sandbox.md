@@ -287,6 +287,12 @@ Merge [the OpenCode example](../examples/opencode.json) into the sandbox's
 The MCP entry must be named `agent_relay`. Confirm it with `opencode mcp list`;
 the result must show `agent_relay` connected.
 
+The example carries `"timeout": 86400000`, OpenCode's per-server MCP deadline
+in milliseconds. Keep it: without it OpenCode falls back to its MCP client
+library's 60-second per-request default and cancels a quiet listener, and the
+progress notifications that would reset the timer are not something the relay
+sends during a wait.
+
 ## 5. Launch in automatic mode
 
 Docker's Codex default startup command supplies

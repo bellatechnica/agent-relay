@@ -84,6 +84,27 @@ opencode mcp add agent_relay --url http://127.0.0.1:8787/mcp
 opencode mcp list
 ```
 
+That command writes no timeout, so add one to
+`~/.config/opencode/opencode.json` before relying on a listener:
+
+```json
+{
+  "mcp": {
+    "agent_relay": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8787/mcp",
+      "timeout": 86400000
+    }
+  }
+}
+```
+
+OpenCode measures this in milliseconds, and without it falls back to its MCP
+client library's 60-second per-request default — the shortest deadline of the
+three clients. A blocked `wait_for_messages` sends no progress notification, so
+nothing resets that timer while the mailbox is quiet. `experimental.mcp_timeout`
+sets the same value once for every server instead of per entry.
+
 Persist this client feature flag in the environment inherited by ordinary
 OpenCode launches:
 

@@ -131,6 +131,14 @@ slug's inbox, reply to a message, and acknowledge a processed message.
 - A Codex listener should use a cheaper available model because waiting does not
   require the parent session's model capability. An OpenCode listener uses the
   session's configured model unless the user requests a different one.
+- OpenCode must configure the `agent_relay` MCP server with a per-server
+  `timeout` of 86,400,000 milliseconds, or set the same value once through
+  `experimental.mcp_timeout`. Without it OpenCode falls back to its MCP client
+  library's own 60-second per-request default, the shortest of the three
+  clients, and cancels a listener whose mailbox is merely quiet. OpenCode does
+  reset that timer on progress notifications, which the relay does not send
+  during a wait. An expired deadline is handled like the others: report it and
+  start exactly one replacement listener without acknowledging a message.
 - OpenCode must expose the background form of its `task` tool. While that form
   remains experimental, installation instructions must persistently set
   `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in the environment inherited

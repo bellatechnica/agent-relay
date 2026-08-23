@@ -4,7 +4,8 @@
     "agent_relay": {
       "type": "remote",
       "url": "http://host.docker.internal:8787/mcp",
-      "oauth": false
+      "oauth": false,
+      "timeout": 86400000
     }
   }
 }
