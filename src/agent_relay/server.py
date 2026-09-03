@@ -15,6 +15,9 @@ from mcp.server.mcpserver import Context
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.subscriptions import ListenHandler
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.shared.inbound import MCP_PROTOCOL_VERSION_HEADER
+from mcp_types.jsonrpc import INVALID_REQUEST
+from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 from sse_starlette import EventSourceResponse
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -22,6 +25,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
+from starlette.types import ASGIApp, Message as ASGIMessage, Receive, Scope, Send
 
 from .errors import (
     AuthenticationError,
@@ -45,6 +49,179 @@ MCP_ALLOWED_HOSTS = [
     "testserver:*",
 ]
 AUTHENTICATION_MODES = ("none", "token")
+
+
+def _is_jsonrpc_notification(body: bytes) -> bool:
+    """Report whether a request body is one well-formed JSON-RPC notification."""
+    try:
+        decoded = json.loads(body)
+    except (ValueError, RecursionError):
+        return False
+    return (
+        isinstance(decoded, dict)
+        and decoded.get("jsonrpc") == "2.0"
+        and isinstance(decoded.get("method"), str)
+        and "id" not in decoded
+    )
+
+
+async def _read_body_for_inspection(
+    receive: Receive, limit: int
+) -> tuple[bytes | None, Receive]:
+    """Buffer up to `limit` body bytes and return a receive that replays them.
+
+    The body is `None` when the request is larger than the limit or is not an
+    ordinary request body; the returned receive still replays every message
+    already taken, so the wrapped application sees the request unchanged.
+    """
+    taken: list[ASGIMessage] = []
+    body = bytearray()
+    complete = True
+    while True:
+        message = await receive()
+        taken.append(message)
+        if message["type"] != "http.request":
+            complete = False
+            break
+        body.extend(message.get("body", b""))
+        if len(body) > limit:
+            complete = False
+            break
+        if not message.get("more_body", False):
+            break
+
+    replayed = iter(taken)
+
+    async def replay() -> ASGIMessage:
+        message = next(replayed, None)
+        return await receive() if message is None else message
+
+    return (bytes(body) if complete else None), replay
+
+
+def _is_invalid_request_rejection(status: int, body: bytes) -> bool:
+    """Report whether a response is the transport's invalid-request rejection.
+
+    The status alone does not identify it. The transport also answers 400 with
+    a plain-text body when the `Content-Type` header is unusable, which it
+    decides before reading any body, so the JSON-RPC error code is what
+    separates the two.
+    """
+    if status != 400:
+        return False
+    try:
+        decoded = json.loads(body)
+    except (ValueError, RecursionError):
+        return False
+    return (
+        isinstance(decoded, dict)
+        and isinstance(decoded.get("error"), dict)
+        and decoded["error"].get("code") == INVALID_REQUEST
+    )
+
+
+def _accept_invalid_request_rejection(send: Send) -> Send:
+    """Replace the invalid-request rejection with an empty 202, forwarding all else.
+
+    The response is held only until its status and body are both known, which
+    for a rejection is one small message. Every other response, including a
+    streamed one, is forwarded as it arrives.
+    """
+    state: dict[str, Any] = {"held": None, "body": bytearray()}
+
+    async def forward(message: ASGIMessage) -> None:
+        held = state["held"]
+        if message["type"] == "http.response.start":
+            if message["status"] == 400:
+                state["held"] = message
+                return
+            await send(message)
+            return
+        if message["type"] != "http.response.body" or held is None:
+            await send(message)
+            return
+        state["body"].extend(message.get("body", b""))
+        if message.get("more_body", False):
+            return
+        body = bytes(state["body"])
+        state["held"] = None
+        if _is_invalid_request_rejection(held["status"], body):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 202,
+                    "headers": [(b"content-length", b"0")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b""})
+            return
+        await send(held)
+        await send({"type": "http.response.body", "body": body})
+
+    return forward
+
+
+class AcceptModernNotifications:
+    """Answer 202 to a JSON-RPC notification the modern MCP entry would reject.
+
+    MCP revision 2026-07-28 carries no session identifier and expresses
+    cancellation as the close of the cancelled call's own HTTP stream, so the
+    SDK's per-request entry rejects every notification body with HTTP 400.
+    The Streamable HTTP transport also lets a server accept a notification POST
+    with 202, and a client may send one after closing the stream: Antigravity
+    CLI 1.1.25 posts `notifications/cancelled` on a fresh connection once its
+    per-call deadline has already closed the wait. Accepting is the honest
+    answer there — the notification carries no id to reply to, and the wait it
+    names is gone by the time it arrives — where a 400 tells that client its
+    cancellation failed when the relay had already performed it.
+
+    The request is always passed to the transport, and only its invalid-request
+    rejection is rewritten, so every other check keeps its own answer: an
+    unusable host, origin, accept header or content type, and a body above the
+    approved size, each still reach the client unchanged. For a body that
+    parsed as JSON and carries no id, that rejection is the only one the
+    transport can still reach — the parse error needs a body that did not
+    parse, and every later rung needs a body that validated as a request, which
+    a notification cannot.
+
+    Bodies reaching the handshake-era paths are untouched, because those route
+    a notification to its session's transport and answering here would swallow
+    it.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("method") != "POST":
+            await self._app(scope, receive, send)
+            return
+        # Era routing reads the first header of that name, as the SDK does;
+        # a duplicate is the SDK's rejection to make, not this wrapper's.
+        wanted = MCP_PROTOCOL_VERSION_HEADER.encode("ascii")
+        version = next(
+            (
+                value.decode("latin-1")
+                for key, value in scope["headers"]
+                if key == wanted
+            ),
+            None,
+        )
+        if version is None or version in HANDSHAKE_PROTOCOL_VERSIONS:
+            await self._app(scope, receive, send)
+            return
+        # Reading the body to classify it holds no more of it than the
+        # transport already accepts and buffers itself; a body past that size
+        # goes through unread, and the transport refuses it as it does today.
+        body, replay = await _read_body_for_inspection(
+            receive, MCP_MAX_REQUEST_BODY_BYTES
+        )
+        if body is not None and _is_jsonrpc_notification(body):
+            await self._app(
+                scope, replay, _accept_invalid_request_rejection(send)
+            )
+            return
+        await self._app(scope, replay, send)
 
 
 class RelayShutdown:
@@ -407,7 +584,7 @@ def create_app(
                 reply,
                 methods=["POST"],
             ),
-            Mount("/", app=mcp_app),
+            Mount("/", app=AcceptModernNotifications(mcp_app)),
         ],
         middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)],
         exception_handlers={RelayError: relay_error_handler},

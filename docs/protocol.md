@@ -200,7 +200,10 @@ otherwise abandons a blocked call after 180 seconds. That client negotiates MCP
 revision `2026-07-28`, which carries no session identifier and defines
 cancellation as the close of the call's own HTTP stream. It closes that stream
 at the deadline, which is when the relay removes the wait, and then posts a
-`notifications/cancelled` on a separate connection.
+`notifications/cancelled` on a separate connection. The relay accepts that
+notification with HTTP 202 and does nothing further with it: the cancellation
+it names has already happened, and the alternative answer tells the client its
+cancellation failed when it did not.
 
 An agent session holds that MCP call open in one of two ways. Where the client
 detaches a long-running MCP call by itself, the session issues the call in its

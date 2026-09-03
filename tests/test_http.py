@@ -4,6 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp_types.version import (
+    LATEST_HANDSHAKE_VERSION,
+    LATEST_MODERN_VERSION,
+)
 from starlette.testclient import TestClient
 
 from agent_relay.hub import NotificationHub
@@ -665,3 +669,128 @@ def test_mcp_rejects_body_above_approved_boundary_without_storing_it(tmp_path):
 
     assert response.status_code == 413
     assert app.state.store.list_sessions() == []
+
+
+# The MCP transport allows the test host only with a port, so these raw
+# POSTs address it that way rather than through the default base URL.
+MCP_BASE_URL = "http://testserver:8787"
+
+
+def mcp_headers(protocol_version, method):
+    return {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": protocol_version,
+        "Mcp-Method": method,
+    }
+
+
+def test_modern_notification_is_accepted_rather_than_called_a_bad_request(
+    tmp_path,
+):
+    app = create_app(tmp_path / "relay.sqlite3", None)
+    with TestClient(app, base_url=MCP_BASE_URL) as client:
+        response = client.post(
+            "/mcp",
+            headers=mcp_headers(LATEST_MODERN_VERSION, "notifications/cancelled"),
+            json={
+                "jsonrpc": "2.0",
+                "method": "notifications/cancelled",
+                "params": {"requestId": 4, "reason": "context deadline exceeded"},
+            },
+        )
+
+    assert response.status_code == 202
+    assert response.content == b""
+
+
+def test_modern_request_still_reaches_the_mcp_server(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None)
+    with TestClient(app, base_url=MCP_BASE_URL) as client:
+        response = client.post(
+            "/mcp",
+            headers=mcp_headers(LATEST_MODERN_VERSION, "tools/list"),
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+                "params": {
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": (
+                            LATEST_MODERN_VERSION
+                        ),
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                    }
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert "wait_for_messages" in response.text
+
+
+def test_modern_body_that_is_not_a_notification_keeps_its_rejection(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None)
+    with TestClient(app, base_url=MCP_BASE_URL) as client:
+        response = client.post(
+            "/mcp",
+            headers=mcp_headers(LATEST_MODERN_VERSION, "notifications/cancelled"),
+            json=["notifications/cancelled"],
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == -32600
+
+
+def test_handshake_era_notification_keeps_its_session_requirement(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None)
+    with TestClient(app, base_url=MCP_BASE_URL) as client:
+        response = client.post(
+            "/mcp",
+            headers=mcp_headers(
+                LATEST_HANDSHAKE_VERSION, "notifications/cancelled"
+            ),
+            json={
+                "jsonrpc": "2.0",
+                "method": "notifications/cancelled",
+                "params": {"requestId": 4},
+            },
+        )
+
+    assert response.status_code == 400
+    assert "session" in response.json()["error"]["message"].lower()
+
+
+def test_notification_with_unusable_content_type_keeps_its_rejection(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None)
+    headers = mcp_headers(LATEST_MODERN_VERSION, "notifications/cancelled")
+    headers["Content-Type"] = "text/plain"
+    with TestClient(app, base_url=MCP_BASE_URL) as client:
+        response = client.post(
+            "/mcp",
+            headers=headers,
+            content=(
+                b'{"jsonrpc": "2.0", "method": "notifications/cancelled",'
+                b' "params": {"requestId": 4}}'
+            ),
+        )
+
+    assert response.status_code == 400
+    assert "Content-Type" in response.text
+
+
+def test_notification_body_above_the_boundary_is_still_refused(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None)
+    padding = "x" * MCP_MAX_REQUEST_BODY_BYTES
+    with TestClient(app, base_url=MCP_BASE_URL) as client:
+        response = client.post(
+            "/mcp",
+            headers=mcp_headers(LATEST_MODERN_VERSION, "notifications/cancelled"),
+            json={
+                "jsonrpc": "2.0",
+                "method": "notifications/cancelled",
+                "params": {"requestId": 4, "reason": padding},
+            },
+        )
+
+    assert response.status_code == 413
