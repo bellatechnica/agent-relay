@@ -80,7 +80,8 @@ exact slug, then instruct it to:
 3. Keep exactly one listener open: a single `wait_for_messages` call whose
    complete result reaches the session unacknowledged. Claude Code issues that
    call in its own turn and lets the client detach it; Codex and OpenCode use a
-   background subagent that returns the result verbatim.
+   background subagent that returns the result verbatim; Antigravity CLI blocks
+   its turn on the call.
 4. Handle the returned messages, acknowledge after processing, and start one
    replacement listener.
 5. Call `send_message` with its `acting_slug` and the recipient's exact slug;

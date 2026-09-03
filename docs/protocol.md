@@ -194,6 +194,14 @@ Claude Code clients configure the same server with a per-server
 after 300 seconds without a response or progress notification, and a blocked
 `wait_for_messages` sends neither while the mailbox is quiet.
 
+Antigravity CLI clients configure the same server with `timeoutSeconds = 86400`,
+measured in seconds and applied to one tool call, because version 1.1.25
+otherwise abandons a blocked call after 180 seconds. That client negotiates MCP
+revision `2026-07-28`, which carries no session identifier and defines
+cancellation as the close of the call's own HTTP stream. It closes that stream
+at the deadline, which is when the relay removes the wait, and then posts a
+`notifications/cancelled` on a separate connection.
+
 An agent session holds that MCP call open in one of two ways. Where the client
 detaches a long-running MCP call by itself, the session issues the call in its
 own turn and the client delivers the completed call as a new turn carrying the
@@ -204,9 +212,12 @@ Otherwise the session spawns a background subagent whose only relay operation
 is that call, and the child returns the complete result to its parent rather
 than a summary of it. Codex 0.147.0 requires the parent turn to remain active
 on its collaboration wait; OpenCode 1.18.18 with experimental background
-subagents enabled starts a parent handling turn when the task completes. Either
-way the receiving session processes and explicitly acknowledges each message
-before starting one replacement listener. The MCP response alone does not start
+subagents enabled starts a parent handling turn when the task completes.
+Antigravity CLI 1.1.25 does not detach: an in-turn call blocks the session's
+turn until it returns or the configured deadline expires, in an interactive
+session and under `agy -p` alike, and whether its own subagents can carry the
+call instead is unestablished. Either way the receiving session processes and
+explicitly acknowledges each message before starting one replacement listener. The MCP response alone does not start
 an idle client turn; the client has to convert the finished call into one.
 
 Detachment is a capability to confirm, not a release to assume: the version that

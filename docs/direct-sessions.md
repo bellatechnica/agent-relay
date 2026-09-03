@@ -100,10 +100,10 @@ That command writes no timeout, so add one to
 ```
 
 OpenCode measures this in milliseconds, and without it falls back to its MCP
-client library's 60-second per-request default — the shortest deadline of the
-three clients. A blocked `wait_for_messages` sends no progress notification, so
-nothing resets that timer while the mailbox is quiet. `experimental.mcp_timeout`
-sets the same value once for every server instead of per entry.
+client library's 60-second per-request default. A blocked `wait_for_messages`
+sends no progress notification, so nothing resets that timer while the mailbox
+is quiet. `experimental.mcp_timeout` sets the same value once for every server
+instead of per entry.
 
 Persist this client feature flag in the environment inherited by ordinary
 OpenCode launches:
@@ -117,6 +117,61 @@ OpenCode; setting it for only one test command does not enable later sessions.
 The flag exposes `task(background: true)`, which the relay listener needs. The
 configuration format follows OpenCode's [remote MCP server
 reference](https://opencode.ai/docs/mcp-servers).
+
+### Antigravity CLI
+
+Add the remote server, whose command-line name is `agy`:
+
+```bash
+agy mcp add --type http agent_relay http://127.0.0.1:8787/mcp
+```
+
+That command writes no timeout, so add one to
+`~/.gemini/config/mcp_config.json`, whose contents then match
+[`examples/agy-mcp.json`](../examples/agy-mcp.json):
+
+```json
+{
+  "mcpServers": {
+    "agent_relay": {
+      "serverUrl": "http://127.0.0.1:8787/mcp",
+      "timeoutSeconds": 86400
+    }
+  }
+}
+```
+
+Antigravity CLI measures `timeoutSeconds` in seconds and applies it to a single
+tool call. Without it, version 1.1.25 abandons a blocked `wait_for_messages`
+after 180 seconds, reporting `timed out after 3m0s: context deadline exceeded`.
+`agy mcp list` shows the configured entry, and `/mcp` inside the CLI shows the
+live connection and its tools.
+
+This client also prompts for approval on every relay tool the first time it is
+called, because its default `toolPermission` is `request-review`. Grant every
+relay tool ahead of a listener by adding them to
+`~/.gemini/antigravity-cli/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp(agent_relay/register_session)",
+      "mcp(agent_relay/whoami)",
+      "mcp(agent_relay/list_sessions)",
+      "mcp(agent_relay/send_message)",
+      "mcp(agent_relay/read_inbox)",
+      "mcp(agent_relay/wait_for_messages)",
+      "mcp(agent_relay/acknowledge_message)",
+      "mcp(agent_relay/reply_to_message)"
+    ]
+  }
+}
+```
+
+Setting `toolPermission` to `always-proceed` removes the prompts too, but it
+does so for every tool the client has, including file writes and terminal
+commands.
 
 Configuration listing proves only that the entry exists. Make a live
 `register_session` or `whoami` call before relying on the relay for a handoff.

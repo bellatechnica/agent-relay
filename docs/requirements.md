@@ -110,6 +110,12 @@ slug's inbox, reply to a message, and acknowledge a processed message.
   silence default while the mailbox is merely quiet. Where the client detaches
   long-running MCP calls, the listener is one `wait_for_messages` call issued in
   the session's own turn rather than a subagent.
+- Antigravity CLI must configure the `agent_relay` MCP server with
+  `timeoutSeconds = 86400`, measured in seconds; without it the call is
+  abandoned after 180 seconds while the mailbox is merely quiet. This client
+  must also hold an approval rule for each relay tool it calls, because its
+  default tool permission asks the operator per tool and an unattended listener
+  has nobody to answer.
 - No relay deployment may require the client's detachment delay to be tuned. It
   is a session-wide setting covering every MCP server, and it bounds how long
   the turn blocks before detaching, never whether the wait survives.

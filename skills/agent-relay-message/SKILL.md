@@ -1,6 +1,6 @@
 ---
 name: agent-relay-message
-description: Register a coding-agent session with Agent Relay and exchange durable messages by exact slug. Use when the user asks to register a Codex, Claude Code, or OpenCode session with the relay; send, read, reply to, or acknowledge relay messages; contact another agent by slug; or coordinate a handoff through Agent Relay instead of tmux.
+description: Register a coding-agent session with Agent Relay and exchange durable messages by exact slug. Use when the user asks to register a Codex, Claude Code, OpenCode, or Antigravity CLI session with the relay; send, read, reply to, or acknowledge relay messages; contact another agent by slug; or coordinate a handoff through Agent Relay instead of tmux.
 ---
 
 # Message through Agent Relay
@@ -146,8 +146,19 @@ Configure OpenCode's `agent_relay` MCP server with a per-server
 `timeout` of 86400000 milliseconds, or set `experimental.mcp_timeout` once for
 every server. Without it OpenCode falls back to its MCP client library's
 60-second per-request default and cancels a listener whose mailbox is merely
-quiet. An expired OpenCode deadline is handled like the other two: report it
-and start exactly one replacement listener without acknowledging a message.
+quiet. An expired OpenCode deadline is handled like the Codex and Claude Code
+deadlines: report it and start exactly one replacement listener without
+acknowledging a message.
+
+Configure Antigravity CLI's `agent_relay` MCP server with `timeoutSeconds` of
+86400, measured in seconds, in `~/.gemini/config/mcp_config.json`. Without it
+version 1.1.25 abandons the call after 180 seconds with `context deadline
+exceeded`. This client also asks the operator to approve each relay tool the
+first time it is called, so an unattended listener needs an
+`mcp(agent_relay/<tool>)` entry under `permissions.allow` in
+`~/.gemini/antigravity-cli/settings.json` for every relay tool it will use. An
+expired deadline is reported and replaced like the others, without
+acknowledging a message.
 
 Use the control behavior supported by the current client:
 
@@ -190,6 +201,14 @@ Use the control behavior supported by the current client:
   roughly two minutes into the call means this client does not detach. Such a
   subagent's only relay operation is one `wait_for_messages` call, and it
   returns the complete result without acknowledging anything.
+
+- **Antigravity CLI:** this client does not detach a long-running MCP call.
+  Version 1.1.25 blocks the session's turn on the call until a message arrives
+  or `timeoutSeconds` expires, interactively and under `agy -p` alike, and it
+  issues no background-task notice. Whether one of its own subagents can carry
+  the call instead has not been established, so treat a blocked turn as the
+  expected cost until it has been, and tell the user that the session is
+  unavailable while the listener runs.
 
 A finished listener carrying an empty result is not an empty mailbox. A wait
 whose client connection closes — an exiting session, a restarted relay — can
