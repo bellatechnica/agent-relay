@@ -65,7 +65,15 @@ else
     relay_verify_skill "$sandbox_name" "$sandbox_home/.claude/skills"
 fi
 
+# Pass the MCP configuration by VALUE, read from the launcher's own copy on the
+# host, rather than by a path into the mounted Agent Relay root. The root is
+# mounted only at create, so a path here would resolve to nothing in a sandbox
+# created by a launcher installed elsewhere, and Claude would start with no
+# Relay server. The file stays the single source; only the delivery changes.
+mcp_config=$(cat "$relay_root/examples/claude-mcp.json") \
+    || relay_die "cannot read the Agent Relay MCP configuration: $relay_root/examples/claude-mcp.json"
+
 exec sbx run --name "$sandbox_name" claude -- \
-    --mcp-config "$sandbox_relay_root/examples/claude-mcp.json" \
+    --mcp-config "$mcp_config" \
     --settings "$settings_value" \
     "${relay_agent_args[@]}"
