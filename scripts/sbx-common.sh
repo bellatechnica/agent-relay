@@ -7,11 +7,17 @@
 set -euo pipefail
 
 relay_usage() {
-    printf 'usage: %s [--profile-dir DIR] [%s_ARG ...]\n' "$(basename "$0")" \
+    printf 'usage: %s [--profile-dir DIR] [--name NAME] [%s_ARG ...]\n' \
+        "$(basename "$0")" \
         "$(printf '%s' "$AGENT_KIND" | tr '[:lower:]' '[:upper:]')" >&2
     printf '\nDIR is a directory holding %s, mounted read-only. Without it the\n' \
         "$PROFILE_FILE_NAME" >&2
     printf 'sandbox runs the agent on its own defaults and nothing is mounted.\n' >&2
+    printf '\nNAME is the sandbox name, as passed to sbx --name. Without it the name\n' >&2
+    printf 'is derived from the agent, profile and workspace. Two launches that\n' >&2
+    printf 'resolve to one name share one sandbox, so an explicit name is how you\n' >&2
+    printf 'keep otherwise identical launches apart, or rejoin a sandbox whose\n' >&2
+    printf 'derived name has since changed.\n' >&2
 }
 
 relay_die() {
@@ -19,31 +25,55 @@ relay_die() {
     exit "${2:-2}"
 }
 
-# Consumes an optional leading --profile-dir, leaving the rest for the agent.
-# Resolves: profile_dir, profile_file, profile_name (all empty when absent)
-# and relay_agent_args.
+# Consumes the optional leading --profile-dir and --name in any order, leaving
+# the rest for the agent. Resolves: profile_dir, profile_file, profile_name (all
+# empty when absent), sandbox_name_override, and relay_agent_args.
 relay_parse_args() {
     profile_dir=
     profile_file=
     profile_name=
+    sandbox_name_override=
     local raw=
 
-    case "${1:-}" in
-        --profile-dir)
-            [[ $# -ge 2 ]] || relay_die "--profile-dir needs a directory"
-            raw=$2
-            shift 2
-            ;;
-        --profile-dir=*)
-            raw=${1#--profile-dir=}
-            shift
-            ;;
-        -h|--help)
-            relay_usage
-            exit 0
-            ;;
-    esac
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --profile-dir)
+                [[ $# -ge 2 ]] || relay_die "--profile-dir needs a directory"
+                raw=$2
+                shift 2
+                ;;
+            --profile-dir=*)
+                raw=${1#--profile-dir=}
+                shift
+                ;;
+            --name)
+                [[ $# -ge 2 ]] || relay_die "--name needs a sandbox name"
+                sandbox_name_override=$2
+                shift 2
+                ;;
+            --name=*)
+                sandbox_name_override=${1#--name=}
+                shift
+                ;;
+            -h|--help)
+                relay_usage
+                exit 0
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
     relay_agent_args=("$@")
+
+    if [[ -n "$sandbox_name_override" ]]; then
+        # Reject rather than sanitise: a silently rewritten name would leave the
+        # caller resuming a sandbox it cannot name, and every later lookup would
+        # miss.
+        [[ "$sandbox_name_override" == "$(printf '%s' "$sandbox_name_override" \
+            | tr -c 'A-Za-z0-9.+-' '-')" ]] \
+            || relay_die "sandbox name may use only A-Za-z0-9.+- : $sandbox_name_override"
+    fi
 
     [[ -n "$raw" ]] || return 0
 
@@ -126,6 +156,10 @@ relay_sandbox_path() {
 # segment added only when a profile directory was given, so one workspace can
 # hold one sandbox per profile.
 relay_sandbox_name() {
+    if [[ -n "${sandbox_name_override:-}" ]]; then
+        printf '%s' "$sandbox_name_override"
+        return 0
+    fi
     local name="$AGENT_KIND-$workspace_name"
     [[ -n "$profile_name" ]] && name="$AGENT_KIND-$profile_name-$workspace_name"
     printf '%s' "$name" | tr -c 'A-Za-z0-9.+-' '-'
