@@ -31,15 +31,26 @@ else
 fi
 # See the note in claude-sbx: one sandbox per agent, profile and workspace
 # basename, reused by later launches rather than replaced.
+sandbox_created=
 if ! relay_sandbox_exists "$sandbox_name"; then
     sbx create --no-share-skills --name "$sandbox_name" \
         codex "${mounts[@]}"
     sbx policy allow network --sandbox "$sandbox_name" localhost:8787
+    sandbox_created=1
 fi
 
 codex_home=$(relay_sandbox_env "$sandbox_name" CODEX_HOME '$HOME/.codex')
-relay_link_skill "$sandbox_name" "$codex_home/skills" \
-    "$sandbox_relay_root/skills/agent-relay-message"
+# The skill link is written ONCE, here, by the same invocation that chose the
+# mounts it points into. Mounts are fixed at create and an existing sandbox is
+# never re-mounted, so a later launcher with a different Agent Relay root would
+# only ever replace a working link with a dangling one. Later launches verify
+# and never write.
+if [[ -n "$sandbox_created" ]]; then
+    relay_link_skill "$sandbox_name" "$codex_home/skills" \
+        "$sandbox_relay_root/skills/agent-relay-message"
+else
+    relay_verify_skill "$sandbox_name" "$codex_home/skills"
+fi
 
 # `codex --profile NAME` layers $CODEX_HOME/NAME.config.toml over the base
 # config, so a given profile file is seeded into the sandbox once. Later

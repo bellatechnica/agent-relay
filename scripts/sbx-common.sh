@@ -183,13 +183,50 @@ relay_sandbox_env() {
     printf '%s' "$value"
 }
 
+# Read-only check for a sandbox this launcher did not just create. The link is
+# written once, at create, from the mounts decided at that moment; mounts never
+# change afterwards, so a link that has gone missing or dangling means the
+# sandbox was created by a launcher with a different Agent Relay root. Rewriting
+# it here is what used to corrupt such a sandbox silently, so report instead.
+relay_verify_skill() {
+    sbx exec "$1" sh -c '
+        set -eu
+        link=$1/agent-relay-message
+        if [ ! -e "$link" ]; then
+            echo "Agent Relay skill missing or dangling in this sandbox:" >&2
+            echo "  $link" >&2
+            echo "It is written once when the sandbox is created, from the" >&2
+            echo "mounts chosen then. This sandbox was created by a launcher" >&2
+            echo "with a different Agent Relay root, or its skills were" >&2
+            echo "removed. Recreate the sandbox, or use the launcher it was" >&2
+            echo "created with. This launcher will not rewrite the link." >&2
+            exit 1
+        fi
+    ' sh "$2" || relay_die "Agent Relay skill is not usable in sandbox: $1" 1
+}
+
 # Links the mounted skill into the agent's own skill directory, so discovery
-# does not depend on which workspace the sandbox was created for.
+# does not depend on which workspace the sandbox was created for. Called only
+# when the sandbox is created, by the invocation that chose its mounts.
 relay_link_skill() {
     sbx exec "$1" sh -c '
         set -eu
         skills_dir=$1
         skill_source=$2
+        # Refuse rather than link to a path this sandbox cannot see. ln succeeds
+        # on a dangling target, so an unchecked link fails silently: the agent
+        # keeps a skill entry that resolves to nothing. This bites when a
+        # sandbox was created by a launcher whose Agent Relay root was mounted
+        # somewhere else, because the root is derived from the launcher path and
+        # an existing sandbox is never re-mounted.
+        if [ ! -e "$skill_source" ]; then
+            echo "Agent Relay skill not readable inside this sandbox:" >&2
+            echo "  $skill_source" >&2
+            echo "This sandbox does not mount the Agent Relay root that this" >&2
+            echo "launcher resolves to. Use the launcher the sandbox was" >&2
+            echo "created with, or recreate the sandbox." >&2
+            exit 1
+        fi
         mkdir -p "$skills_dir"
         ln -sfnT "$skill_source" "$skills_dir/agent-relay-message"
     ' sh "$2" "$3" || relay_die "failed to link the Agent Relay skill into: $2" 1
