@@ -210,7 +210,13 @@ detaches a long-running MCP call by itself, the session issues the call in its
 own turn and the client delivers the completed call as a new turn carrying the
 tool result: an interactive Claude Code detaches a call that has not returned
 within 120 seconds and wakes the session that way, a behavior observed in
-v2.1.234 through v2.1.238 and one a client-side feature gate can disable.
+v2.1.234 through v2.1.238 and one a client-side feature gate can disable. It is
+not a behavior later releases inherit. An interactive Claude Code v2.1.261 that
+issued the call in its own turn never detached it: no background notice
+appeared, control never returned, and the turn stayed blocked for about 23 hours
+until a message arrived at 2026-09-04T22:42Z. That session ran background shell
+commands and a background subagent in the same conversation, so background tasks
+were enabled — the absence of detachment was specific to the MCP call.
 Otherwise the session spawns a background subagent whose only relay operation
 is that call, and the child returns the complete result to its parent rather
 than a summary of it. Codex 0.147.0 requires the parent turn to remain active
@@ -220,19 +226,29 @@ Antigravity CLI 1.1.25 does not detach: an in-turn call blocks the session's
 turn until it returns or the configured deadline expires, in an interactive
 session and under `agy -p` alike, and whether its own subagents can carry the
 call instead is unestablished. Either way the receiving session processes and
-explicitly acknowledges each message before starting one replacement listener. The MCP response alone does not start
-an idle client turn; the client has to convert the finished call into one.
+explicitly acknowledges each message before starting one replacement listener.
+The MCP response alone does not start an idle client turn; the client has to
+convert the finished call into one.
 
-Detachment is a capability to confirm, not a release to assume: the version that
-introduced it is not established and a client-side feature gate can disable it,
-so the observable proof is the client's own notice that the call moved to the
-background. A session without that proof — an older client, a non-interactive
-run, or one with background tasks disabled — uses the subagent form, because an
-undetached call blocks the session's turn until a message arrives or the client
-deadline expires, and a blocked call cannot change mechanism without a user
-interrupt. The detachment delay is a session-wide client setting covering every
-MCP server; it bounds how long the turn blocks before detaching and never
-whether the wait survives, so no relay deployment needs it tuned.
+Detachment is a capability to confirm per session, not a release to assume. It
+neither arrives at a known version nor persists once seen: v2.1.261 did not
+detach where v2.1.234 through v2.1.238 did, and one observation cannot separate
+a regression from a feature gate closed by configuration or by rollout. The
+observable proof is this session's own notice that the call moved to the
+background, and the subagent form is what a session uses until it has that
+notice — not a fallback for old or unusual clients, but the default a newer
+client also lands on. What settles the version question is a run on each release
+under a known gate setting, which nobody has recorded.
+
+The cost of assuming wrongly is not a failed call. An undetached call blocks the
+session's turn until a message arrives or the client deadline expires, and a
+blocked call cannot change mechanism without a user interrupt; the v2.1.261 run
+above sat for 23 hours, and the prompts its user sent meanwhile were queued and
+delivered only when the call finally returned.
+
+The detachment delay is a session-wide client setting covering every MCP server;
+it bounds how long the turn blocks before detaching and never whether the wait
+survives, so no relay deployment needs it tuned.
 
 A listener that finishes carrying an empty result is not an empty mailbox. A
 wait ended by a closing client connection can report completion with no payload

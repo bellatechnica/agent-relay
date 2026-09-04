@@ -174,33 +174,40 @@ Use the control behavior supported by the current client:
   by the OpenCode process, then call `task` with `background: true`. Keep the
   session's current model unless the user requests another. Do not use manual
   `Ctrl+B` detachment as the listener mechanism.
-- **Claude Code:** where the client detaches long-running MCP calls, call
-  `wait_for_messages` from the session's own turn and let it detach. An
-  interactive Claude Code moves an MCP call that has not returned within 120
-  seconds into a background task, reports that task's identifier, and returns
-  control to the session; the call keeps running, and its completion arrives as
-  a task notification whose body carries the tool result verbatim. A message
-  arriving before that cutoff returns inline in the same turn. Prefer this to a
-  subagent listener, whose result reaches the parent as child-written text
-  rather than the relay's own payload. Do not shorten the cutoff:
+- **Claude Code:** use a background subagent listener unless this session has
+  already watched an MCP call detach. The subagent's only relay operation is one
+  `wait_for_messages` call, and it returns the complete result without
+  acknowledging anything.
+
+  Start there rather than with the in-turn call, because the two mechanisms fail
+  asymmetrically. A subagent listener that was not needed costs only fidelity:
+  its result reaches the parent as child-written text rather than the relay's
+  own payload. An in-turn call on a client that turns out not to detach blocks
+  the session's turn until a message arrives or the 24-hour deadline expires,
+  handles no queued user prompt meanwhile, and cannot switch mechanisms by
+  itself — a user interrupt is the only thing that ends it. One such session sat
+  blocked for 23 hours. The cheap mistake is recoverable within the turn and the
+  expensive one is not, so the cheap one is the default.
+
+  Where detachment is confirmed, call `wait_for_messages` from the session's own
+  turn and let it detach: the client moves an MCP call that has not returned
+  within 120 seconds into a background task, reports that task's identifier, and
+  returns control to the session, and the completion arrives as a task
+  notification whose body carries the tool result verbatim. A message arriving
+  before that cutoff returns inline in the same turn. Do not shorten the cutoff:
   `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS` governs every MCP server in the session,
   not `agent_relay` alone, and it bounds only how long the turn blocks before
   detaching, never whether the wait survives.
 
-  Treat detachment as a capability to confirm, not a version to assume: a
-  feature gate can switch it off in any release. It is confirmed once this
-  session has seen the notice that a call moved to the background. It is absent
-  in a non-interactive run (`claude -p`) without `CLAUDE_AUTO_BACKGROUND_TASKS`
-  set, and in a session with background tasks disabled.
-
-  Use a background subagent listener whenever detachment is unconfirmed, and on
-  any older or unknown client. Without it the in-turn call blocks the session's
-  turn until a message arrives or the 24-hour deadline expires, and no queued
-  user prompt is handled meanwhile; a blocked call cannot switch mechanisms by
-  itself, so a user interrupt is what ends it. A notice that has not appeared
-  roughly two minutes into the call means this client does not detach. Such a
-  subagent's only relay operation is one `wait_for_messages` call, and it
-  returns the complete result without acknowledging anything.
+  Confirmation is this session having seen the background notice, and it does
+  not transfer between sessions or survive an upgrade. It has been present in
+  one release range and absent in a later one, so a release number proves
+  nothing in either direction. It is also absent in a non-interactive run
+  (`claude -p`) without `CLAUDE_AUTO_BACKGROUND_TASKS` set, and in a session
+  with background tasks disabled — but neither of those explains every absence:
+  the 23-hour session above ran background shell commands and a background
+  subagent throughout. If a notice has not appeared roughly two minutes into a
+  call, this client is not detaching it, and only a user interrupt ends it.
 
 - **Antigravity CLI:** this client does not detach a long-running MCP call.
   Version 1.1.25 blocks the session's turn on the call until a message arrives

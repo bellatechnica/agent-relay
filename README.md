@@ -78,10 +78,11 @@ exact slug, then instruct it to:
 2. Call `read_inbox` once, handle every pending message in send order, and
    acknowledge each only after processing it.
 3. Keep exactly one listener open: a single `wait_for_messages` call whose
-   complete result reaches the session unacknowledged. Claude Code issues that
-   call in its own turn and lets the client detach it; Codex and OpenCode use a
-   background subagent that returns the result verbatim; Antigravity CLI blocks
-   its turn on the call.
+   complete result reaches the session unacknowledged. Codex, OpenCode and
+   Claude Code use a background subagent that returns the result verbatim; a
+   Claude Code that has shown this session it detaches long-running MCP calls
+   may issue the call in its own turn instead; Antigravity CLI blocks its turn
+   on the call.
 4. Handle the returned messages, acknowledge after processing, and start one
    replacement listener.
 5. Call `send_message` with its `acting_slug` and the recipient's exact slug;
@@ -90,8 +91,10 @@ exact slug, then instruct it to:
 
 The version-specific listener behavior of each client is recorded in the
 [protocol reference](docs/protocol.md#what-push-means-for-an-agent). OpenCode
-requires `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`; a Claude Code that
-does not detach the call falls back to the subagent form. The
+requires `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`; Claude Code
+detachment varies by release and must be observed in the session that relies on
+it, because an in-turn call that is not detached blocks that session's turn for
+as long as its mailbox stays quiet. The
 [`agent-relay-message`](skills/agent-relay-message) skill contains the exact
 client rules. The `handoff` workflow includes both slugs and starts listeners
 on both sides. Agent Relay is its default durable message channel. When a send

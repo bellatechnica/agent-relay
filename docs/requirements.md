@@ -107,9 +107,10 @@ slug's inbox, reply to a message, and acknowledge a processed message.
   steered into the running turn and then continue waiting for the same listener.
 - Claude Code must configure the `agent_relay` MCP server with a per-server
   `timeout = 86400000` milliseconds; without it the call aborts at that client's
-  silence default while the mailbox is merely quiet. Where the client detaches
-  long-running MCP calls, the listener is one `wait_for_messages` call issued in
-  the session's own turn rather than a subagent.
+  silence default while the mailbox is merely quiet. Where that session has
+  observed the client detaching a long-running MCP call, the listener is one
+  `wait_for_messages` call issued in the session's own turn rather than a
+  subagent; without that observation it is a subagent, whatever the release.
 - Antigravity CLI must configure the `agent_relay` MCP server with
   `timeoutSeconds = 86400`, measured in seconds; without it the call is
   abandoned after 180 seconds while the mailbox is merely quiet. This client
@@ -120,13 +121,14 @@ slug's inbox, reply to a message, and acknowledge a processed message.
   is a session-wide setting covering every MCP server, and it bounds how long
   the turn blocks before detaching, never whether the wait survives.
 - Detachment is a capability the session must confirm from the client's own
-  notice rather than infer from a release number, because the version that
-  introduced it is not established and a feature gate can disable it. A
-  background subagent listener is the required fallback wherever that proof is
-  absent, including older clients and non-interactive runs; an undetached call
-  blocks the session's turn until a message arrives. The
+  notice rather than infer from a release number, because it has been present
+  in one Claude Code release range and absent in a later one, and because a
+  feature gate can disable it. A background subagent listener is the required
+  listener wherever that proof is absent, which includes newer clients as well
+  as older ones and non-interactive runs; an undetached call blocks the
+  session's turn until a message arrives, for as long as that takes. The
   [protocol reference](protocol.md#what-push-means-for-an-agent) holds the
-  observed behavior and version range.
+  observed behavior, versions and dates.
 - A subagent listener must return the complete `wait_for_messages` result to its
   parent without acknowledging anything, because a child-written summary is not
   the relay's payload.

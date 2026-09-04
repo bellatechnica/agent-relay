@@ -400,12 +400,15 @@ child. OpenCode 1.18.18 uses `task(background: true)` and its current model; the
 creation-time kit ensures the task form is present, and completion starts the
 parent handling turn.
 
-An interactive Claude Code needs no subagent: it detaches the call itself and
-delivers the finished call as a turn carrying the tool result verbatim, so the
-sandbox session issues `wait_for_messages` in its own turn. The [protocol
-reference](protocol.md#what-push-means-for-an-agent) records the
-version-specific observation, how to confirm detachment, the subagent fallback,
-and the receiver alternatives.
+A sandboxed Claude Code uses the subagent form too, until that session has
+watched the client detach a long-running MCP call for itself. Where it does
+detach, it delivers the finished call as a turn carrying the tool result
+verbatim, and the session can issue `wait_for_messages` in its own turn instead.
+Detachment has been present in one release range and absent in a later one, so
+it is confirmed per session and never inferred from a version. The [protocol
+reference](protocol.md#what-push-means-for-an-agent) records the observations
+with their versions and dates, how to confirm detachment, what an undetached
+call costs, and the receiver alternatives.
 
 This path needs no Codex App Server, OpenCode HTTP API, Docker socket,
 terminal-multiplexer socket, or agent-control socket in the sandbox. Direct

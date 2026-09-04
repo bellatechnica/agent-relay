@@ -224,13 +224,15 @@ continues waiting for the same child. OpenCode 1.18.18 uses
 `task(background: true)` and its current model; background completion starts
 the parent handling turn.
 
-An interactive Claude Code needs no subagent: it detaches a long-running MCP
-call by itself and delivers the finished call as a turn carrying the tool result
-verbatim, so the session issues `wait_for_messages` in its own turn. Sessions
-whose client does not detach the call keep using the subagent form. The
+Claude Code uses the subagent form too, until the session has watched the client
+detach a long-running MCP call for itself. Where it does detach, it delivers the
+finished call as a turn carrying the tool result verbatim, and the session can
+issue `wait_for_messages` in its own turn instead. Detachment has been present
+in one release range and absent in a later one, so it is confirmed per session
+and never inferred from a version. The
 [protocol reference](protocol.md#what-push-means-for-an-agent) records the
-version-specific observation, how to confirm detachment, and the receiver
-alternatives.
+observations with their versions and dates, how to confirm detachment, what an
+undetached call costs, and the receiver alternatives.
 
 Codex App Server and OpenCode's HTTP API are not required. Receivers built on
 those control APIs are optional P2 integrations described in the [protocol
