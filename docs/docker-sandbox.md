@@ -100,31 +100,43 @@ inside the sandbox; a WSL path such as `/mnt/d/...` is not the path Claude sees.
 
 ## 2b. Launch through the repository's launchers
 
-`scripts/claude-sbx` and `scripts/codex-sbx` create the sandbox on first use
-and start the agent in it thereafter. Both work from any workspace, not only
-from this repository, and neither needs anything installed beyond `sbx`:
+`scripts/claude-sbx`, `scripts/codex-sbx` and `scripts/agy-sbx` create the
+sandbox on first use and start the agent in it thereafter. All three work from
+any workspace, not only from this repository, and none needs anything installed
+beyond `sbx`:
 
 ```bash
-claude-sbx [--profile-dir DIR] [CLAUDE_ARG ...]
-codex-sbx  [--profile-dir DIR] [CODEX_ARG ...]
+claude-sbx [--profile-dir DIR] [--name NAME] [CLAUDE_ARG ...]
+codex-sbx  [--profile-dir DIR] [--name NAME] [CODEX_ARG ...]
+agy-sbx    [--profile-dir DIR] [--name NAME] [AGY_ARG ...]
 ```
 
 Symlink them into a directory on `PATH`; each resolves its own checkout, so
 the symlink target keeps working. The sandbox mounts the current workspace
 read-write and this checkout read-only, and the launcher takes both the Relay
-MCP configuration (`examples/claude-mcp.json`) and the skill
-(`skills/agent-relay-message`) from that read-only mount. It then links the
-skill into the agent's own skill directory inside the sandbox —
-`~/.claude/skills/` for Claude Code, `$CODEX_HOME/skills/` for Codex — so
-discovery does not depend on which workspace the sandbox was created for.
+MCP configuration (`examples/claude-mcp.json`, `examples/agy-mcp.json`) and the
+skill (`skills/agent-relay-message`) from that read-only mount. It then links
+the skill into the agent's own skill directory inside the sandbox —
+`~/.claude/skills/` for Claude Code, `$CODEX_HOME/skills/` for Codex,
+`~/.gemini/config/skills/` for Antigravity CLI — so discovery does not depend on
+which workspace the sandbox was created for.
 
 `--profile-dir` is optional. Point it at a directory holding `settings.json`
-for Claude Code or `config.toml` for Codex, and the launcher mounts that
-directory read-only and selects the file. Without it, the sandbox runs the
-agent on its own defaults and mounts nothing extra. Keep such profiles in a
-directory of your own; pointing `--profile-dir` at the host agent home
-(`~/.claude`, `~/.codex`) mounts credentials and session history into the
-sandbox, and the launchers warn when you do.
+for Claude Code or Antigravity CLI, or `config.toml` for Codex, and the launcher
+mounts that directory read-only and selects the file. Without it, the sandbox
+runs the agent on its own defaults and mounts nothing extra. Keep such profiles
+in a directory of your own; pointing `--profile-dir` at the host agent home
+(`~/.claude`, `~/.codex`, `~/.gemini`) mounts credentials and session history
+into the sandbox, and the launchers warn when you do.
+
+Antigravity CLI takes its profile differently from the other two, because it has
+no flag for a settings file: it reads `~/.gemini/antigravity-cli/settings.json`
+inside the sandbox, so the launcher copies the profile there the first time, and
+leaves it alone afterwards because the CLI writes a session's own choices back
+into that same file. A profile for this agent can therefore carry a `model` key
+— the display name shown by `/model`, such as `"Gemini 3.1 Pro (High)"` — along
+with `toolPermission`, `permissions.allow` entries for the relay tools, and
+`enableTelemetry`.
 
 The sandbox is named `<agent>-<workspace>`, or `<agent>-<profile>-<workspace>`
 when a profile directory was given, so one workspace can hold one sandbox per
@@ -132,6 +144,21 @@ profile. The name carries the workspace basename, not its full path: two
 different directories with the same basename share one sandbox and therefore
 its original mounts. Check `sbx ls` and rename or recreate when that is not
 what you want.
+
+Two things differ for Antigravity CLI, both because Docker Sandboxes ships no
+image for it. Its sandbox is created from the plain `shell` template and the CLI
+is installed into it once, at create, from the vendor's own installer, which
+verifies a SHA-512 against a signed manifest. That install needs general
+outbound access, where a Claude or Codex sandbox needs only the relay
+destination — so this agent is the one to think about first when tightening the
+network policy in step 1. First launch therefore pays an image pull and a
+download of roughly 200 MB; later launches in the same sandbox pay neither. The
+CLI also updates itself in the background during ordinary runs, so a
+long-lived sandbox does not stay on the version it was created with.
+
+Authenticate inside the sandbox on its first run, as with the other agents. The
+sign-in prints a URL and accepts a pasted code, so it completes without a
+browser in the container.
 
 The launchers run on native Linux and under WSL against the Windows Docker
 Sandboxes build; only the latter needs host and in-sandbox path conversion,

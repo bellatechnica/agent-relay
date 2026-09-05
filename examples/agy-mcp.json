@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "agent_relay": {
-      "serverUrl": "http://127.0.0.1:8787/mcp",
+      "serverUrl": "http://host.docker.internal:8787/mcp",
       "timeoutSeconds": 86400
     }
   }

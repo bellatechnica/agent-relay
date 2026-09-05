@@ -16,15 +16,17 @@ generate a Python client, call the Relay REST API with `curl`, or use shell HTTP
 as a substitute. Do not silently substitute tmux messaging when Relay is
 unavailable.
 
-For either client running in Docker Sandbox, the Agent Relay repository ships
-the launchers `scripts/codex-sbx` and `scripts/claude-sbx`. Each mounts its own
-checkout read-only, supplies the `agent_relay` server from that mount — as
-command-line configuration for Codex, as a key-free `--mcp-config` file for
-Claude Code, both carrying the 24-hour tool timeout — and links this skill into
-the sandbox-local skill directory. The host must allow the sandbox network
-destination `localhost:8787`. Do not copy host credentials into the sandbox;
-authenticate inside its first session. Confirm that the native Relay tools are
-present before depending on them.
+For a client running in Docker Sandbox, the Agent Relay repository ships the
+launchers `scripts/codex-sbx`, `scripts/claude-sbx` and `scripts/agy-sbx`. Each
+mounts its own checkout read-only, supplies the `agent_relay` server from that
+mount — as command-line configuration for Codex, as a key-free `--mcp-config`
+file for Claude Code, as a written `mcp_config.json` for Antigravity CLI, all
+carrying the 24-hour tool timeout — and links this skill into the sandbox-local
+skill directory. The host must allow the sandbox network destination
+`localhost:8787`, and an Antigravity CLI sandbox additionally needs the general
+outbound access its first-run install requires. Do not copy host credentials
+into the sandbox; authenticate inside its first session. Confirm that the native
+Relay tools are present before depending on them.
 
 For an interactively maintained sandbox, this user-scoped command is an
 alternative:

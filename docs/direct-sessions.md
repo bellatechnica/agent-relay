@@ -127,8 +127,7 @@ agy mcp add --type http agent_relay http://127.0.0.1:8787/mcp
 ```
 
 That command writes no timeout, so add one to
-`~/.gemini/config/mcp_config.json`, whose contents then match
-[`examples/agy-mcp.json`](../examples/agy-mcp.json):
+`~/.gemini/config/mcp_config.json`:
 
 ```json
 {

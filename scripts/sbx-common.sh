@@ -1,6 +1,6 @@
 # Shared logic for the Agent Relay sandbox launchers.
 #
-# Source this from a launcher; it expects AGENT_KIND (claude|codex) and
+# Source this from a launcher; it expects AGENT_KIND (claude|codex|agy) and
 # PROFILE_FILE_NAME (settings.json|config.toml) to be set beforehand, and
 # leaves the resolved values in the variables documented at each step.
 
@@ -88,7 +88,8 @@ relay_parse_args() {
     # The agent's own host config directory holds credentials and session
     # history; mounting it would hand both to the sandbox.
     local native
-    for native in "$HOME/.claude" "$HOME/.codex" "$HOME/.config/opencode"; do
+    for native in "$HOME/.claude" "$HOME/.codex" "$HOME/.config/opencode" \
+        "$HOME/.gemini" "$HOME/.gemini/antigravity-cli"; do
         if [[ "$profile_dir" == "$(readlink -f -- "$native" 2>/dev/null)" ]]; then
             printf 'warning: %s is the host agent home; it contains credentials that this mount exposes to the sandbox\n' \
                 "$profile_dir" >&2
