@@ -222,10 +222,10 @@ Use the control behavior supported by the current client:
 - **Antigravity CLI:** this client does not detach a long-running MCP call.
   Version 1.1.25 blocks the session's turn on the call until a message arrives
   or `timeoutSeconds` expires, interactively and under `agy -p` alike, and it
-  issues no background-task notice. Whether one of its own subagents can carry
-  the call instead has not been established, so treat a blocked turn as the
-  expected cost until it has been, and tell the user that the session is
-  unavailable while the listener runs.
+  issues no background-task notice. Its own subagents are not a way around that
+  either: one given `enable_mcp_tools` did not reach the relay at all. So a
+  blocked turn is the expected cost for this client, and the user is told that
+  the session is unavailable while the listener runs.
 
 A finished listener carrying an empty result is not an empty mailbox. A wait
 whose client connection closes — an exiting session, a restarted relay — can

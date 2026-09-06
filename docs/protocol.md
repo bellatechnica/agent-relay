@@ -252,8 +252,9 @@ on its collaboration wait; OpenCode 1.18.18 with experimental background
 subagents enabled starts a parent handling turn when the task completes.
 Antigravity CLI 1.1.25 does not detach: an in-turn call blocks the session's
 turn until it returns or the configured deadline expires, in an interactive
-session and under `agy -p` alike, and whether its own subagents can carry the
-call instead is unestablished. Either way the receiving session processes and
+session and under `agy -p` alike, and its own subagents are not a way around
+that, for the reasons recorded above. Either way the receiving session processes
+and
 explicitly acknowledges each message before starting one replacement listener.
 The MCP response alone does not start an idle client turn; the client has to
 convert the finished call into one.
