@@ -205,6 +205,34 @@ notification with HTTP 202 and does nothing further with it: the cancellation
 it names has already happened, and the alternative answer tells the client its
 cancellation failed when it did not.
 
+`timeoutSeconds` is not the only clock on a listener in that client. Print mode
+carries its own `--print-timeout`, defaulting to five minutes, which ends the
+whole run irrespective of the per-call value: a headless listener configured for
+24 hours still died at 5m03s, reporting `timeout waiting for response` rather
+than the per-call deadline message. Raised past it, the same call stayed open
+for 1h59m51s and was still open when the harness running it stopped, so nothing
+between five minutes and two hours bounds it. A headless listener needs both
+values raised; raising only the per-call one buys nothing. Note also that `-p`
+takes the next argument as its prompt, so `--print-timeout` must precede it or
+be attached to the flag — the client refuses the ambiguous form rather than
+running the wrong prompt.
+
+A subagent of that client is not an alternative listener. Subagents defined with
+`enable_mcp_tools` did not reach this server on 1.1.26: two attempts naming
+different tools both reported the tool absent, no `tools/call` for either
+crossed the wire, and the one that would have registered a slug left no session
+behind. The parent's own calls appear in that same capture, so the absence is
+not a blind instrument. This falls short of proof — both attempts were driven by
+a model that had already claimed a tool was unavailable when it was not, and a
+model that declines to call is indistinguishable at the wire from a tool that is
+missing — and the client's own changelog records this exact failure as fixed in
+1.1.23. Driving the same attempt from a stronger model is what would settle it.
+
+Versions for that client go stale faster than observations about it, because it
+updates itself in the background during ordinary runs. The figures above were
+gathered across 1.1.25 and 1.1.26 with no upgrade requested, and a sandbox
+created during the same work installed 1.1.27.
+
 An agent session holds that MCP call open in one of two ways. Where the client
 detaches a long-running MCP call by itself, the session issues the call in its
 own turn and the client delivers the completed call as a new turn carrying the
@@ -249,6 +277,14 @@ delivered only when the call finally returned.
 The detachment delay is a session-wide client setting covering every MCP server;
 it bounds how long the turn blocks before detaching and never whether the wait
 survives, so no relay deployment needs it tuned.
+
+The 24-hour figure this document gives for Claude Code is measured rather than
+inferred. A subagent listener on v2.1.261, against a server configured
+`timeout = 86400000`, held one `wait_for_messages` call for the full day and
+ended on that deadline, the tool reporting a timeout after 86400 seconds and the
+subagent carrying it having lived 86405. A deadline is what ended it, not a
+message, which is what distinguishes this from a wait that merely happened to
+run long.
 
 A listener that finishes carrying an empty result is not an empty mailbox. A
 wait ended by a closing client connection can report completion with no payload

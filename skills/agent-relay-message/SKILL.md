@@ -162,6 +162,14 @@ first time it is called, so an unattended listener needs an
 expired deadline is reported and replaced like the others, without
 acknowledging a message.
 
+A listener run headlessly in that client needs `--print-timeout` raised too,
+placed before `-p`. Print mode's own five-minute default ends the run whatever
+`timeoutSeconds` says, and it reports `timeout waiting for response` rather than
+the per-call deadline message — so read which of the two messages came back
+before concluding the relay configuration is wrong. Do not treat a subagent of
+this client as the listener: on 1.1.26 a subagent given `enable_mcp_tools` did
+not reach the relay at all, and no call it claimed to make appeared on the wire.
+
 Use the control behavior supported by the current client:
 
 - **Codex:** spawn the listener with `gpt-5.6-luna` and low reasoning when that

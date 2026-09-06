@@ -146,6 +146,24 @@ after 180 seconds, reporting `timed out after 3m0s: context deadline exceeded`.
 `agy mcp list` shows the configured entry, and `/mcp` inside the CLI shows the
 live connection and its tools.
 
+A headless listener needs a second value raised as well. Print mode has its own
+`--print-timeout`, five minutes by default, which ends the run whatever
+`timeoutSeconds` says: a listener configured for 24 hours still died at 5m03s,
+reporting `timeout waiting for response`.
+
+```bash
+agy --print-timeout 24h -p 'your prompt'
+```
+
+The flag has to precede `-p`, which otherwise takes it as the prompt. The CLI
+refuses that ordering rather than running the wrong thing, so the mistake costs
+a message rather than a silent wrong answer. Interactive sessions have no such
+bound.
+
+This client also updates itself in the background during ordinary runs, so the
+version behind any observation here is not necessarily the version you are
+running. Check `agy --version` before relying on a version-specific note.
+
 This client also prompts for approval on every relay tool the first time it is
 called, because its default `toolPermission` is `request-review`. Grant every
 relay tool ahead of a listener by adding them to
