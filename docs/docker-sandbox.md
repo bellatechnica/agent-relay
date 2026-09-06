@@ -135,8 +135,17 @@ inside the sandbox, so the launcher copies the profile there the first time, and
 leaves it alone afterwards because the CLI writes a session's own choices back
 into that same file. A profile for this agent can therefore carry a `model` key
 — the display name shown by `/model`, such as `"Gemini 3.1 Pro (High)"` — along
-with `toolPermission`, `permissions.allow` entries for the relay tools, and
-`enableTelemetry`.
+with `permissions.allow` entries for the relay tools and `enableTelemetry`.
+
+Approvals are off for every agent here, and `agy-sbx` turns them off on the
+command line to match. Docker Sandboxes does it through each agent's own
+entrypoint, which a sandbox reached through the `shell` template never runs, so
+without the flag this one agent would prompt where none of the others do. That
+is a consistency argument rather than a safety one: what an approval is traded
+against is the container, not the dialog, and the container does not cover the
+workspace, which every launcher here mounts read-write. A profile may still set
+`toolPermission` for its own sake, since that is what governs the same CLI
+outside a sandbox, but inside one the flag decides.
 
 The sandbox is named `<agent>-<workspace>`, or `<agent>-<profile>-<workspace>`
 when a profile directory was given, so one workspace can hold one sandbox per

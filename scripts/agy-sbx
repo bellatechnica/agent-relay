@@ -98,5 +98,16 @@ sbx exec "$sandbox_name" sh -c '
 # The `shell` template starts a login shell, so the CLI is reached through it
 # rather than as the sandbox's own agent. The login shell is also what puts the
 # installer's PATH edit into effect.
+#
+# Approvals are turned off, because reaching the CLI this way skips the agent
+# entrypoint every other sandboxed agent gets, and Docker Sandboxes turns them
+# off in all of those: claude runs with `--dangerously-skip-permissions`, codex
+# with `--dangerously-bypass-approvals-and-sandbox`, copilot, cursor and gemini
+# with `--yolo`, kiro with `--trust-all-tools`. Prompting here would not make a
+# safer sandbox, only an inconsistent one, and an unattended relay listener has
+# nobody to answer a prompt. What the approval is traded against is the
+# container boundary rather than the dialog — and that boundary does not cover
+# the workspace, which is mounted read-write here exactly as for the others.
 exec sbx run --name "$sandbox_name" shell -- \
-    -lc 'exec agy "$@"' agy "${relay_agent_args[@]}"
+    -lc 'exec agy "$@"' agy --dangerously-skip-permissions \
+    "${relay_agent_args[@]}"
