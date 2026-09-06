@@ -335,6 +335,15 @@ def _optional_string(body: dict[str, Any], name: str) -> str | None:
     return value
 
 
+def _optional_flag(body: dict[str, Any], name: str) -> bool:
+    value = body.get(name)
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ValidationError(f"{name} must be a boolean")
+    return value
+
+
 def _message_payload(message: Message) -> dict[str, object]:
     return message.as_dict()
 
@@ -344,6 +353,18 @@ def _sent_message_payload(
 ) -> dict[str, object]:
     payload = _message_payload(message)
     payload["recipient_waiting_at_send"] = recipient_waiting_at_send
+    return payload
+
+
+def _reply_payload(
+    message: Message,
+    recipient_waiting_at_send: bool,
+    acknowledged_message_id: str | None,
+) -> dict[str, object]:
+    payload = _sent_message_payload(message, recipient_waiting_at_send)
+    # Always present, so a caller reads the outcome rather than assuming its
+    # request took effect. Null means no acknowledgement was requested.
+    payload["acknowledged_message_id"] = acknowledged_message_id
     return payload
 
 
@@ -523,16 +544,23 @@ def create_app(
     async def reply(request: Request) -> JSONResponse:
         sender = _session_for_request(request, store, authentication_mode)
         body = await _json_object(request)
+        answered_message_id = request.path_params["message_id"]
+        acknowledge = _optional_flag(body, "acknowledge")
         message = store.reply_to_message(
             sender.session_id,
-            request.path_params["message_id"],
+            answered_message_id,
             _required_string(body, "content"),
+            acknowledge=acknowledge,
         )
         recipient_waiting_at_send = await hub.notify(
             message.recipient_session_id
         )
         return JSONResponse(
-            _sent_message_payload(message, recipient_waiting_at_send),
+            _reply_payload(
+                message,
+                recipient_waiting_at_send,
+                answered_message_id if acknowledge else None,
+            ),
             status_code=201,
         )
 
@@ -607,14 +635,20 @@ def _build_mcp_server(
             "sessions by slug. First call register_session with your assigned "
             "slug, then pass that same slug as acting_slug on later tools. Send "
             "to another agent with recipient_slug. Read messages remain pending "
-            "until explicitly acknowledged."
+            "until explicitly acknowledged. A reply can carry that "
+            "acknowledgement with acknowledge=true, but only when it completes "
+            "the work the answered message asked for. Acknowledge a processed "
+            "batch in one turn rather than one turn per message."
         )
     else:
         instructions = (
             "Use this durable mailbox to communicate with other coding-agent "
             "sessions. The bearer token establishes your identity; omit "
             "acting_slug. Address recipients by slug. Read messages remain "
-            "pending until explicitly acknowledged."
+            "pending until explicitly acknowledged. A reply can carry that "
+            "acknowledgement with acknowledge=true, but only when it completes "
+            "the work the answered message asked for. Acknowledge a processed "
+            "batch in one turn rather than one turn per message."
         )
     mcp = MCPServer(
         "agent-relay",
@@ -717,14 +751,21 @@ def _build_mcp_server(
         message_id: str,
         content: str,
         context: Context,
+        acknowledge: bool = False,
         acting_slug: str | None = None,
     ) -> dict[str, object]:
-        """Reply durably and report whether the recipient had an active MCP wait."""
+        """Reply durably, acknowledging the answered message when asked to."""
         sender = acting_session(context, acting_slug)
-        message = store.reply_to_message(sender.session_id, message_id, content)
+        message = store.reply_to_message(
+            sender.session_id, message_id, content, acknowledge=acknowledge
+        )
         recipient_waiting_at_send = await hub.notify(
             message.recipient_session_id
         )
-        return _sent_message_payload(message, recipient_waiting_at_send)
+        return _reply_payload(
+            message,
+            recipient_waiting_at_send,
+            message_id if acknowledge else None,
+        )
 
     return mcp

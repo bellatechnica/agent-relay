@@ -167,3 +167,67 @@ def test_unknown_recipient_is_rejected(store):
 
     with pytest.raises(NotFoundError, match="active session"):
         store.send_message(outside.session.session_id, "missing", "hello")
+
+
+def test_reply_can_carry_its_own_acknowledgement(store):
+    outside, sandbox = issue_pair(store)
+    original = store.send_message(
+        outside.session.session_id, sandbox.session.session_id, "question"
+    )
+    # Reach the branch from the state a real session is in: the message has
+    # been delivered and is pending, not freshly inserted.
+    store.mark_delivery_attempt(
+        sandbox.session.session_id, [original.message_id]
+    )
+    assert len(store.unacknowledged_messages(sandbox.session.session_id)) == 1
+
+    reply = store.reply_to_message(
+        sandbox.session.session_id,
+        original.message_id,
+        "answer",
+        acknowledge=True,
+    )
+
+    assert reply.recipient_session_id == outside.session.session_id
+    assert reply.in_reply_to == original.message_id
+    assert store.unacknowledged_messages(sandbox.session.session_id) == []
+    # The reply itself is a new message to the other participant and must not
+    # arrive pre-acknowledged in their inbox.
+    pending, = store.unacknowledged_messages(outside.session.session_id)
+    assert pending.message_id == reply.message_id
+
+
+def test_reply_without_acknowledgement_leaves_the_message_pending(store):
+    outside, sandbox = issue_pair(store)
+    original = store.send_message(
+        outside.session.session_id, sandbox.session.session_id, "question"
+    )
+
+    store.reply_to_message(
+        sandbox.session.session_id, original.message_id, "still working"
+    )
+
+    pending, = store.unacknowledged_messages(sandbox.session.session_id)
+    assert pending.message_id == original.message_id
+    assert pending.acknowledged_at is None
+
+
+def test_sender_replying_cannot_acknowledge_and_sends_no_reply(store):
+    outside, sandbox = issue_pair(store)
+    original = store.send_message(
+        outside.session.session_id, sandbox.session.session_id, "question"
+    )
+
+    with pytest.raises(AuthorizationError, match="only the recipient"):
+        store.reply_to_message(
+            outside.session.session_id,
+            original.message_id,
+            "following up",
+            acknowledge=True,
+        )
+
+    # Refused before sending: the recipient's inbox holds the original alone,
+    # with no reply delivered alongside it.
+    pending, = store.unacknowledged_messages(sandbox.session.session_id)
+    assert pending.message_id == original.message_id
+    assert store.unacknowledged_messages(outside.session.session_id) == []

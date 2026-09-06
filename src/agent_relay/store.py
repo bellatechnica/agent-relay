@@ -279,7 +279,11 @@ class RelayStore:
         return self._message_from_row(row)
 
     def reply_to_message(
-        self, replying_session_id: str, message_id: str, content: str
+        self,
+        replying_session_id: str,
+        message_id: str,
+        content: str,
+        acknowledge: bool = False,
     ) -> Message:
         with self._connect() as connection:
             original = self._require_message(connection, message_id)
@@ -289,17 +293,29 @@ class RelayStore:
         }
         if replying_session_id not in participants:
             raise AuthorizationError("only a participant can reply to this message")
+        # Either participant may reply, but only the recipient may acknowledge.
+        # Refuse before sending so a rejected acknowledgement leaves no reply
+        # behind; the reverse order would deliver a reply the caller believes
+        # was refused.
+        if acknowledge and replying_session_id != original["recipient_session_id"]:
+            raise AuthorizationError("only the recipient can acknowledge this message")
         recipient_session_id = (
             original["recipient_session_id"]
             if replying_session_id == original["sender_session_id"]
             else original["sender_session_id"]
         )
-        return self.send_message(
+        reply = self.send_message(
             replying_session_id,
             recipient_session_id,
             content,
             in_reply_to=message_id,
         )
+        # Sent first, acknowledged second: should this fail, the reply stands
+        # and the answered message stays pending, so it is redelivered rather
+        # than lost.
+        if acknowledge:
+            self.acknowledge_message(replying_session_id, message_id)
+        return reply
 
     def unacknowledged_messages(self, recipient_session_id: str) -> list[Message]:
         with self._connect() as connection:

@@ -794,3 +794,149 @@ def test_notification_body_above_the_boundary_is_still_refused(tmp_path):
         )
 
     assert response.status_code == 413
+
+
+def test_reply_acknowledges_the_answered_message_in_one_call(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None, authentication_mode="none")
+    with TestClient(app) as client:
+        client.post("/v1/sessions", json={"slug": "outside", "agent_kind": "codex"})
+        client.post("/v1/sessions", json={"slug": "sandbox", "agent_kind": "claude"})
+        sent = client.post(
+            "/v1/messages",
+            headers=acting_as("outside"),
+            json={"recipient_slug": "sandbox", "content": "please inspect"},
+        ).json()
+
+        combined = client.post(
+            f"/v1/messages/{sent['message_id']}/reply",
+            headers=acting_as("sandbox"),
+            json={"content": "inspection complete", "acknowledge": True},
+        )
+        sandbox_inbox = client.get(
+            "/v1/messages", headers=acting_as("sandbox")
+        ).json()["messages"]
+        outside_inbox = client.get(
+            "/v1/messages", headers=acting_as("outside")
+        ).json()["messages"]
+
+    assert combined.status_code == 201
+    body = combined.json()
+    assert body["acknowledged_message_id"] == sent["message_id"]
+    assert body["recipient_slug"] == "outside"
+    # One call did both: nothing left pending for the replier, and the reply
+    # itself reached the other participant.
+    assert sandbox_inbox == []
+    assert [message["message_id"] for message in outside_inbox] == [
+        body["message_id"]
+    ]
+
+
+def test_reply_reports_no_acknowledgement_when_none_was_requested(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None, authentication_mode="none")
+    with TestClient(app) as client:
+        client.post("/v1/sessions", json={"slug": "outside", "agent_kind": "codex"})
+        client.post("/v1/sessions", json={"slug": "sandbox", "agent_kind": "claude"})
+        sent = client.post(
+            "/v1/messages",
+            headers=acting_as("outside"),
+            json={"recipient_slug": "sandbox", "content": "please inspect"},
+        ).json()
+
+        reply = client.post(
+            f"/v1/messages/{sent['message_id']}/reply",
+            headers=acting_as("sandbox"),
+            json={"content": "still working"},
+        ).json()
+        sandbox_inbox = client.get(
+            "/v1/messages", headers=acting_as("sandbox")
+        ).json()["messages"]
+
+    assert reply["acknowledged_message_id"] is None
+    assert [message["message_id"] for message in sandbox_inbox] == [
+        sent["message_id"]
+    ]
+
+
+def test_mcp_reply_tool_carries_the_acknowledgement(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None, authentication_mode="none")
+    with TestClient(app):
+        call_mcp(app, "register_session", {"slug": "outside", "agent_kind": "codex"})
+        call_mcp(app, "register_session", {"slug": "sandbox", "agent_kind": "claude"})
+        sent = call_mcp(
+            app,
+            "send_message",
+            {
+                "recipient_slug": "sandbox",
+                "content": "please inspect",
+                "acting_slug": "outside",
+            },
+        )
+        reply = call_mcp(
+            app,
+            "reply_to_message",
+            {
+                "message_id": sent["message_id"],
+                "content": "inspection complete",
+                "acknowledge": True,
+                "acting_slug": "sandbox",
+            },
+        )
+        sandbox_inbox = call_mcp(
+            app, "read_inbox", {"acting_slug": "sandbox"}
+        )["messages"]
+
+    assert reply["acknowledged_message_id"] == sent["message_id"]
+    assert sandbox_inbox == []
+
+
+def test_reply_acknowledgement_from_the_sender_is_refused_without_replying(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None, authentication_mode="none")
+    with TestClient(app) as client:
+        client.post("/v1/sessions", json={"slug": "outside", "agent_kind": "codex"})
+        client.post("/v1/sessions", json={"slug": "sandbox", "agent_kind": "claude"})
+        sent = client.post(
+            "/v1/messages",
+            headers=acting_as("outside"),
+            json={"recipient_slug": "sandbox", "content": "please inspect"},
+        ).json()
+
+        refused = client.post(
+            f"/v1/messages/{sent['message_id']}/reply",
+            headers=acting_as("outside"),
+            json={"content": "following up", "acknowledge": True},
+        )
+        sandbox_inbox = client.get(
+            "/v1/messages", headers=acting_as("sandbox")
+        ).json()["messages"]
+
+    assert refused.status_code == 403
+    # Refused before sending: the original stands alone, with no reply beside it.
+    assert [message["message_id"] for message in sandbox_inbox] == [
+        sent["message_id"]
+    ]
+
+
+def test_reply_rejects_a_non_boolean_acknowledge(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None, authentication_mode="none")
+    with TestClient(app) as client:
+        client.post("/v1/sessions", json={"slug": "outside", "agent_kind": "codex"})
+        client.post("/v1/sessions", json={"slug": "sandbox", "agent_kind": "claude"})
+        sent = client.post(
+            "/v1/messages",
+            headers=acting_as("outside"),
+            json={"recipient_slug": "sandbox", "content": "please inspect"},
+        ).json()
+
+        rejected = client.post(
+            f"/v1/messages/{sent['message_id']}/reply",
+            headers=acting_as("sandbox"),
+            json={"content": "inspection complete", "acknowledge": "yes"},
+        )
+        sandbox_inbox = client.get(
+            "/v1/messages", headers=acting_as("sandbox")
+        ).json()["messages"]
+
+    assert rejected.status_code == 422
+    assert [message["message_id"] for message in sandbox_inbox] == [
+        sent["message_id"]
+    ]
