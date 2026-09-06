@@ -66,7 +66,8 @@ requests through unexpected Host headers.
    calls `send_message` with that slug.
 5. The recipient calls `read_inbox` with its own token. A reply made with
    `reply_to_message` is routed to the original sender automatically.
-6. Only the recipient token may acknowledge a message. Unacknowledged messages
+6. Only the recipient token may acknowledge a message, whether in a standalone
+   acknowledgement or in a reply that requests one. Unacknowledged messages
    remain durable and are replayed after reconnects or server restarts.
 
 No participant receives another participant's token. The administrator token
@@ -88,7 +89,7 @@ All request and response bodies are JSON except the SSE stream.
 | `GET /v1/messages` | Session token or acting-slug header | Every unacknowledged inbox message |
 | `GET /v1/events` | Session token or acting-slug header | Live SSE notifications plus durable replay |
 | `POST /v1/messages/{message_id}/ack` | Recipient token or acting-slug header | Acknowledge a message |
-| `POST /v1/messages/{message_id}/reply` | Participant token or acting-slug header | Reply to the other participant |
+| `POST /v1/messages/{message_id}/reply` | Participant token or acting-slug header | Reply to the other participant, optionally acknowledging the answered message |
 
 Register a session in the default mode:
 
@@ -148,7 +149,7 @@ The Streamable HTTP endpoint is `/mcp`. It exposes:
 - `read_inbox(acting_slug?)`
 - `wait_for_messages(acting_slug?)`
 - `acknowledge_message(message_id, acting_slug?)`
-- `reply_to_message(message_id, content, acting_slug?)`
+- `reply_to_message(message_id, content, acknowledge?, acting_slug?)`
 
 The `acting_slug` argument is omitted in `token` mode because the bearer token
 supplies it. It is required in `none` mode. Supplying a slug different from the
@@ -158,6 +159,19 @@ bearer token's session is rejected in `token` mode.
 `recipient_waiting_at_send` with the same semantics as the HTTP send and reply
 responses. A caller must use the boolean captured in that response rather than
 querying current listener state and introducing a second race.
+
+`reply_to_message` accepts `acknowledge`, false by default, which acknowledges
+the message being answered in the same call. The HTTP reply route accepts the
+same flag as an `acknowledge` boolean in its request body. Both responses report
+the outcome in `acknowledged_message_id`: the answered message's ID when the
+acknowledgement was applied, and null when none was requested, so a caller reads
+what happened rather than assuming its request took effect. The flag is opt-in
+because a reply can precede the completion of the work the answered message
+asked for, and an acknowledgement asserts that work is done. The relay validates
+that the replier is the message's recipient before sending the reply, so a
+sender's request to acknowledge fails without delivering a reply. Should the
+acknowledgement fail after the reply is sent, the reply stands and the answered
+message stays pending, which redelivers it rather than losing it.
 
 The MCP transport refuses request bodies above 4 MiB with HTTP 413 before a tool
 can run. No partial message is inserted. If one logical payload is larger, split

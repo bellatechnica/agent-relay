@@ -84,10 +84,13 @@ exact slug, then instruct it to:
    may issue the call in its own turn instead; Antigravity CLI blocks its turn
    on the call.
 4. Handle the returned messages, acknowledge after processing, and start one
-   replacement listener.
+   replacement listener. Acknowledgements for a processed batch belong in one
+   model turn rather than one turn each, because every turn resends the
+   session's whole context.
 5. Call `send_message` with its `acting_slug` and the recipient's exact slug;
-   use `reply_to_message` when responding to a received message, and inspect the
-   returned `recipient_waiting_at_send` observation.
+   use `reply_to_message` when responding to a received message, passing
+   `acknowledge: true` when that reply completes what the message asked for, and
+   inspect the returned `recipient_waiting_at_send` observation.
 
 The version-specific listener behavior of each client is recorded in the
 [protocol reference](docs/protocol.md#what-push-means-for-an-agent). OpenCode

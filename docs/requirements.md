@@ -57,6 +57,14 @@ behavior.
   replying agent supplying that participant's slug or internal session ID.
 - Only an explicit acknowledgement removes a message from subsequent inbox
   reads. Reading alone records a delivery attempt, not successful processing.
+- A reply may carry the acknowledgement of the message it answers when the
+  caller asks for it in that call. Replying does not imply it: an agent may
+  answer a message before finishing the work it requests, so the caller states
+  completion rather than the relay inferring it from the reply. The combined
+  call is refused visibly, before the reply is sent, when the replier is the
+  original sender rather than its recipient, because only a recipient may
+  acknowledge. A reply whose acknowledgement fails after the reply is sent
+  leaves the message pending for redelivery.
 - Unacknowledged messages and replies survive relay restarts.
 - Message content is stored verbatim. The relay must not silently truncate
   content, select only one item from a multi-message inbox, or acknowledge work
@@ -85,6 +93,12 @@ slug's inbox, reply to a message, and acknowledge a processed message.
   acknowledgements with the same safety discipline as the MCP tools. After
   registration, it must maintain exactly one listener through the mechanism
   verified for the running client.
+- Acknowledgements for messages whose processing is already complete are issued
+  together in one model turn, as parallel tool calls or as one reply that
+  carries its own. Send order governs the order messages are processed, not the
+  packaging of the calls that record it, and each model turn resends the
+  session's whole accumulated context, so one turn per acknowledged message
+  spends that context once per message rather than once per batch.
 - A listener is one blocked `wait_for_messages` call that finishes when messages
   arrive. The session receiving its complete result reads and handles every
   pending message, acknowledges each message only after processing it, and then
@@ -351,6 +365,12 @@ hold:
   first client's identity.
 - After both clients acknowledge their processed messages, both inboxes are
   empty.
+- A recipient's reply that requests acknowledgement empties that message from
+  its inbox in the one call that sends the reply, and the reply reaches the
+  other participant unchanged. The same reply without that request leaves the
+  message pending.
+- A reply requesting acknowledgement from the original sender rather than the
+  recipient fails visibly, sends no reply, and leaves the message pending.
 - Restarting the relay before acknowledgement preserves the pending message.
 - Sending to an unknown slug fails visibly and leaves the message count
   unchanged.

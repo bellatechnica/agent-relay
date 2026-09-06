@@ -100,7 +100,21 @@ merely because the inbox call returned it.
 
 When a response belongs to a received message, call `reply_to_message`; the
 relay derives the other participant. Use a new `send_message` only for a new
-thread or when the user explicitly addresses a different slug.
+thread or when the user explicitly addresses a different slug. When the reply
+itself completes what that message asked for, pass `acknowledge: true` and let
+the one call do both. Leave it false, and acknowledge separately later, whenever
+the reply reports progress rather than completion — an acknowledgement claims
+the work is done, and a message acknowledged early is one nothing will
+redeliver.
+
+Package the calls that record completed work into as few turns as possible.
+Every model turn resends the session's entire accumulated context, so five
+acknowledgements issued as five turns pay for that context five times and the
+same five issued as parallel tool calls in one turn pay for it once. Send order
+governs which message you handle first, not how the resulting calls are
+packaged: once several messages are processed, their acknowledgements are
+independent and belong in a single turn. This costs nothing in safety, because
+each call still names a message whose work is already complete.
 
 ## Maintain one listener
 
@@ -113,7 +127,9 @@ Then keep exactly one listener for this slug:
    nothing while the wait is in flight.
 3. When the wait returns, handle every returned message in send order.
 4. Acknowledge each message only after its requested work or presentation is
-   complete. Use `reply_to_message` when the response belongs to that message.
+   complete. Use `reply_to_message` when the response belongs to that message,
+   with `acknowledge: true` where that reply completes it. Issue whatever
+   acknowledgements remain for the batch together in one turn.
 5. Start one replacement listener after all returned messages are handled.
 
 Do not start a second listener while one is active. Do not poll `read_inbox` or
