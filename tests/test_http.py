@@ -940,3 +940,120 @@ def test_reply_rejects_a_non_boolean_acknowledge(tmp_path):
     assert [message["message_id"] for message in sandbox_inbox] == [
         sent["message_id"]
     ]
+
+
+CONFIRMATION_ONLY_SLUGS = ("outside", "sandbox")
+DISTINCTIVE_BODY = "audit-marker-9f3c\nsecond line of the body"
+
+
+def _register_pair(client):
+    for slug, kind in zip(CONFIRMATION_ONLY_SLUGS, ("codex", "claude")):
+        client.post("/v1/sessions", json={"slug": slug, "agent_kind": kind})
+
+
+def test_confirmations_omit_the_content_that_delivery_returns_verbatim(tmp_path):
+    """The body is absent from send and ack, and present in the inbox between them."""
+    app = create_app(tmp_path / "relay.sqlite3", None, authentication_mode="none")
+    with TestClient(app) as client:
+        _register_pair(client)
+        sent = client.post(
+            "/v1/messages",
+            headers=acting_as("outside"),
+            json={"recipient_slug": "sandbox", "content": DISTINCTIVE_BODY},
+        ).json()
+        delivered, = client.get(
+            "/v1/messages", headers=acting_as("sandbox")
+        ).json()["messages"]
+        acknowledged = client.post(
+            f"/v1/messages/{sent['message_id']}/ack",
+            headers=acting_as("sandbox"),
+        ).json()
+
+    # Confirmation of the send: identity and routing, no body.
+    assert "content" not in sent
+    assert sent["message_id"] and sent["recipient_slug"] == "sandbox"
+    # Delivery of the same message: the body, byte for byte. Without this the
+    # test could not tell a trimmed response from a lost message.
+    assert delivered["message_id"] == sent["message_id"]
+    assert delivered["content"] == DISTINCTIVE_BODY
+    # Confirmation of the acknowledgement: which message, and when.
+    assert "content" not in acknowledged
+    assert acknowledged["message_id"] == sent["message_id"]
+    assert acknowledged["acknowledged_at"] is not None
+
+
+def test_confirmations_omit_internal_session_identifiers(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None, authentication_mode="none")
+    with TestClient(app) as client:
+        _register_pair(client)
+        sent = client.post(
+            "/v1/messages",
+            headers=acting_as("outside"),
+            json={"recipient_slug": "sandbox", "content": DISTINCTIVE_BODY},
+        ).json()
+        reply = client.post(
+            f"/v1/messages/{sent['message_id']}/reply",
+            headers=acting_as("sandbox"),
+            json={"content": "answer", "acknowledge": True},
+        ).json()
+        delivered, = client.get(
+            "/v1/messages", headers=acting_as("outside")
+        ).json()["messages"]
+
+    internal = ("sender_session_id", "recipient_session_id")
+    assert not any(field in sent for field in internal)
+    assert not any(field in reply for field in internal)
+    # Delivery is unchanged, so the identifiers are still reachable there.
+    assert all(field in delivered for field in internal)
+
+
+def test_reply_confirmation_keeps_the_fields_agents_are_told_to_read(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None, authentication_mode="none")
+    with TestClient(app) as client:
+        _register_pair(client)
+        sent = client.post(
+            "/v1/messages",
+            headers=acting_as("outside"),
+            json={"recipient_slug": "sandbox", "content": DISTINCTIVE_BODY},
+        ).json()
+        reply = client.post(
+            f"/v1/messages/{sent['message_id']}/reply",
+            headers=acting_as("sandbox"),
+            json={"content": "answer", "acknowledge": True},
+        ).json()
+
+    assert reply["recipient_waiting_at_send"] is False
+    assert reply["acknowledged_message_id"] == sent["message_id"]
+    assert reply["in_reply_to"] == sent["message_id"]
+    assert reply["recipient_slug"] == "outside"
+    assert reply["sent_at"] is not None
+    assert "content" not in reply
+
+
+def test_mcp_wait_and_inbox_still_deliver_content_after_trimming(tmp_path):
+    app = create_app(tmp_path / "relay.sqlite3", None, authentication_mode="none")
+    with TestClient(app):
+        call_mcp(app, "register_session", {"slug": "outside", "agent_kind": "codex"})
+        call_mcp(app, "register_session", {"slug": "sandbox", "agent_kind": "claude"})
+        sent = call_mcp(
+            app,
+            "send_message",
+            {
+                "recipient_slug": "sandbox",
+                "content": DISTINCTIVE_BODY,
+                "acting_slug": "outside",
+            },
+        )
+        waited = call_mcp(app, "wait_for_messages", {"acting_slug": "sandbox"})
+        inbox = call_mcp(app, "read_inbox", {"acting_slug": "sandbox"})
+        acknowledged = call_mcp(
+            app,
+            "acknowledge_message",
+            {"message_id": sent["message_id"], "acting_slug": "sandbox"},
+        )
+
+    assert "content" not in sent
+    assert waited["messages"][0]["content"] == DISTINCTIVE_BODY
+    assert inbox["messages"][0]["content"] == DISTINCTIVE_BODY
+    assert "content" not in acknowledged
+    assert acknowledged["acknowledged_at"] is not None

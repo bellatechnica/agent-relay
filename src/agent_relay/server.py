@@ -345,15 +345,31 @@ def _optional_flag(body: dict[str, Any], name: str) -> bool:
 
 
 def _message_payload(message: Message) -> dict[str, object]:
+    """Return the whole stored message, for the paths that deliver one.
+
+    Inbox reads, blocking waits and event-stream frames use this. Handing over
+    the content is what those calls are for, so they carry it verbatim.
+    """
     return message.as_dict()
 
 
 def _sent_message_payload(
     message: Message, recipient_waiting_at_send: bool
 ) -> dict[str, object]:
-    payload = _message_payload(message)
-    payload["recipient_waiting_at_send"] = recipient_waiting_at_send
-    return payload
+    """Report what a send or reply established, without quoting it back.
+
+    The caller wrote this content a moment ago, and a tool result is resent to
+    the model on every later turn of its session, so echoing the body charges
+    for it again on each of those turns. Internal session identifiers are left
+    out too: callers address each other by slug.
+    """
+    return {
+        "message_id": message.message_id,
+        "recipient_slug": message.recipient_slug,
+        "in_reply_to": message.in_reply_to,
+        "sent_at": message.sent_at,
+        "recipient_waiting_at_send": recipient_waiting_at_send,
+    }
 
 
 def _reply_payload(
@@ -366,6 +382,18 @@ def _reply_payload(
     # request took effect. Null means no acknowledgement was requested.
     payload["acknowledged_message_id"] = acknowledged_message_id
     return payload
+
+
+def _acknowledged_payload(message: Message) -> dict[str, object]:
+    """Report which message an acknowledgement settled, and when.
+
+    The acknowledging caller has just finished processing this message, so its
+    body is the one thing it does not need returned.
+    """
+    return {
+        "message_id": message.message_id,
+        "acknowledged_at": message.acknowledged_at,
+    }
 
 
 def _record_delivery_attempts(
@@ -539,7 +567,7 @@ def create_app(
         message = store.acknowledge_message(
             recipient.session_id, request.path_params["message_id"]
         )
-        return JSONResponse(_message_payload(message))
+        return JSONResponse(_acknowledged_payload(message))
 
     async def reply(request: Request) -> JSONResponse:
         sender = _session_for_request(request, store, authentication_mode)
@@ -742,7 +770,7 @@ def _build_mcp_server(
     ) -> dict[str, object]:
         """Confirm that this session processed a received message."""
         recipient = acting_session(context, acting_slug)
-        return _message_payload(
+        return _acknowledged_payload(
             store.acknowledge_message(recipient.session_id, message_id)
         )
 
