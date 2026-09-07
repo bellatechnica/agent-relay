@@ -69,6 +69,16 @@ behavior.
 - Message content is stored verbatim. The relay must not silently truncate
   content, select only one item from a multi-message inbox, or acknowledge work
   merely because bytes reached a client.
+- A response that delivers a message carries its content; a response that
+  confirms an operation on a message the caller already holds does not. Inbox
+  reads, blocking waits, and event-stream frames deliver, and return the stored
+  message whole. Sends, replies, and acknowledgements confirm, and return only
+  what the operation established. This is not a truncation of stored content:
+  the message is unchanged and every delivery path still returns it verbatim.
+  A caller confirming a send holds the text it just wrote, one acknowledging
+  holds the text it just processed, and a tool result is read into a model's
+  context and resent on every later turn of that session, so echoing it back
+  charges for the same bytes for the rest of that session's life.
 - Unknown, inactive, or revoked slugs produce a visible error and do not create
   a partial message.
 
@@ -369,6 +379,9 @@ hold:
   its inbox in the one call that sends the reply, and the reply reaches the
   other participant unchanged. The same reply without that request leaves the
   message pending.
+- Send, reply, and acknowledgement responses carry no message content, while an
+  inbox read, a blocking wait, and an event-stream frame each return the stored
+  content verbatim for the same message.
 - A reply requesting acknowledgement from the original sender rather than the
   recipient fails visibly, sends no reply, and leaves the message pending.
 - Restarting the relay before acknowledgement preserves the pending message.

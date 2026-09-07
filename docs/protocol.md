@@ -17,6 +17,31 @@ database sequence order. A reconnect replays an unacknowledged message even if a
 previous connection received its SSE event, because transport receipt is not
 processing proof.
 
+## Delivery and confirmation responses
+
+Two kinds of response mention a message, and they carry different amounts of it.
+
+A **delivery** — an inbox read, a blocking wait, or an event-stream frame —
+returns the stored message whole, content included, because handing over the
+content is the operation.
+
+A **confirmation** — a send, a reply, or an acknowledgement — returns only what
+the operation established. A send or reply reports `message_id`,
+`recipient_slug`, `in_reply_to`, `sent_at` and `recipient_waiting_at_send`, and
+a reply that acknowledged adds `acknowledged_message_id`. An acknowledgement
+reports `message_id` and `acknowledged_at`.
+
+A confirmation omits the content deliberately, and omits nothing the caller
+lacks: whoever sends holds the text a moment after writing it, and whoever
+acknowledges holds the text it has just finished processing. The stored message
+is untouched, and every delivery path still returns it verbatim. The reason to
+leave it out is that these transports feed coding agents: a tool result is read
+into a model's context and resent to the model on every later turn of that
+session, so an echoed message body is paid for once when it arrives and again on
+every turn that follows. Internal session identifiers are omitted from
+confirmations for the same reason, and because callers address each other by
+slug rather than by identifier.
+
 ## Identity modes
 
 Start the default trusted slug mode without credentials:
