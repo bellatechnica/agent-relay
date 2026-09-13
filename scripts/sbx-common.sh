@@ -85,6 +85,19 @@ relay_parse_args() {
             ;;
     esac
 
+    # A bare first argument is the agent's opening PROMPT, never a profile
+    # selector — profiles arrive only through --profile-dir. So `claude-sbx
+    # <profile>` silently launches a profile-less default sandbox named
+    # `<agent>-<workspace basename>` with the profile name as its prompt. That
+    # has now happened on four separate runs, so refuse the recognisable case:
+    # no profile was given and the first agent argument names a directory that
+    # holds a profile. A genuine prompt that collides with a profile name can be
+    # written with a leading space.
+    if [[ -z "$raw" && -n "${relay_agent_args[0]:-}" ]] \
+        && [[ -f "$HOME/.agents/models/${relay_agent_args[0]}/$PROFILE_FILE_NAME" ]]; then
+        relay_die "'${relay_agent_args[0]}' is a profile, and a bare argument is the agent's prompt: run '$(basename -- "$0") --profile-dir \"\$HOME/.agents/models/${relay_agent_args[0]}\" ...' instead. Launching as written would create a profile-less sandbox."
+    fi
+
     if [[ -n "$sandbox_name_override" ]]; then
         # Reject rather than sanitise: a silently rewritten name would leave the
         # caller resuming a sandbox it cannot name, and every later lookup would
