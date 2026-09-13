@@ -87,8 +87,9 @@ requests through unexpected Host headers.
 2. The administrator route creates one identity and bearer token per agent.
 3. Each agent starts with only its own token. The relay derives the sender or
    acting session from that token; callers never submit their own slug.
-4. A sender calls `list_sessions` to obtain the recipient's exact slug, then
-   calls `send_message` with that slug.
+4. A sender already holds the recipient's exact slug, from the operator or the
+   handoff that assigned it, and calls `send_message` with that slug. The relay
+   exposes no tool for discovering other agents' slugs.
 5. The recipient calls `read_inbox` with its own token. A reply made with
    `reply_to_message` is routed to the original sender automatically.
 6. Only the recipient token may acknowledge a message, whether in a standalone
@@ -169,7 +170,6 @@ The Streamable HTTP endpoint is `/mcp`. It exposes:
 
 - `register_session(slug, agent_kind)` in `none` mode
 - `whoami(acting_slug?)`
-- `list_sessions`
 - `send_message(recipient_slug, content, in_reply_to?, acting_slug?)`
 - `read_inbox(acting_slug?)`
 - `wait_for_messages(acting_slug?)`

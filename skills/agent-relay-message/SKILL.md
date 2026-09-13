@@ -61,8 +61,9 @@ wake notice.
 
 ## Establish this session's slug
 
-- Use the slug assigned by the user or handoff prompt. Never select one active
-  slug arbitrarily from `list_sessions` and claim it as this session.
+- Use the slug assigned by the user or handoff prompt. There is no tool for
+  discovering another session's slug, so a slug you were not given is a slug to
+  ask for, never one to guess at or adopt from elsewhere.
 - Call `register_session(slug, agent_kind)` in unauthenticated mode. Registration
   is idempotent, so repeat it when resuming a session or when registration state
   is uncertain.

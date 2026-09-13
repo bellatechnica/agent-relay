@@ -713,13 +713,6 @@ def _build_mcp_server(
         return acting_session(context, acting_slug).as_dict()
 
     @mcp.tool()
-    def list_sessions(context: Context) -> dict[str, object]:
-        """List every active agent slug available for exact routing."""
-        if authentication_mode == "token":
-            acting_session(context, None)
-        return {"sessions": [session.as_dict() for session in store.list_sessions()]}
-
-    @mcp.tool()
     async def send_message(
         recipient_slug: str,
         content: str,

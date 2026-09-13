@@ -175,7 +175,6 @@ relay tool ahead of a listener by adding them to
     "allow": [
       "mcp(agent_relay/register_session)",
       "mcp(agent_relay/whoami)",
-      "mcp(agent_relay/list_sessions)",
       "mcp(agent_relay/send_message)",
       "mcp(agent_relay/read_inbox)",
       "mcp(agent_relay/wait_for_messages)",

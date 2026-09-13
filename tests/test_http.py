@@ -226,7 +226,6 @@ def test_none_mode_mcp_tools_self_register_and_round_trip(tmp_path):
     assert tool_names == {
         "register_session",
         "whoami",
-        "list_sessions",
         "send_message",
         "read_inbox",
         "wait_for_messages",
