@@ -75,6 +75,16 @@ relay_parse_args() {
     done
     relay_agent_args=("$@")
 
+    # A launcher has no subcommands. When its first agent argument is an sbx
+    # verb, the caller meant `sbx <verb>` and would otherwise get a NEW default
+    # launch with that verb as the agent's opening prompt — twice on one night
+    # that started a stray sandbox on the production checkout. Refuse.
+    case "${relay_agent_args[0]:-}" in
+        ls|list|exec|stop|start|rm|remove|reset|prune|status|logs|login|logout|ps|inspect)
+            relay_die "'${relay_agent_args[0]}' is an sbx verb, not a launch: run 'sbx ${relay_agent_args[0]} ...' instead. This launcher only launches an agent."
+            ;;
+    esac
+
     if [[ -n "$sandbox_name_override" ]]; then
         # Reject rather than sanitise: a silently rewritten name would leave the
         # caller resuming a sandbox it cannot name, and every later lookup would
