@@ -7,12 +7,16 @@
 set -euo pipefail
 
 relay_usage() {
-    printf 'usage: %s [--profile-dir DIR] [--name NAME] [%s_ARG ...]\n' \
+    printf 'usage: %s [--profile-dir DIR] [--name NAME] [--with-proxy] [%s_ARG ...]\n' \
         "$(basename "$0")" \
         "$(printf '%s' "$AGENT_KIND" | tr '[:lower:]' '[:upper:]')" >&2
     printf '\nDIR is a directory holding %s, mounted read-only. Without it the\n' \
         "$PROFILE_FILE_NAME" >&2
     printf 'sandbox runs the agent on its own defaults and nothing is mounted.\n' >&2
+    printf '\n--with-proxy keeps the sandbox HTTP(S)_PROXY variables that route every\n' >&2
+    printf 'request through the Docker Sandbox TLS-terminating proxy. The default is\n' >&2
+    printf 'to clear them: that intercept has broken long streamed responses, and it\n' >&2
+    printf 'is not what provides egress containment. Applies at sandbox create only.\n' >&2
     printf '\nNAME is the sandbox name, as passed to sbx --name. Without it the name\n' >&2
     printf 'is derived from the agent, profile and workspace. Two launches that\n' >&2
     printf 'resolve to one name share one sandbox, so an explicit name is how you\n' >&2
@@ -33,6 +37,7 @@ relay_parse_args() {
     profile_file=
     profile_name=
     sandbox_name_override=
+    relay_with_proxy=
     local raw=
 
     while [[ $# -gt 0 ]]; do
@@ -53,6 +58,10 @@ relay_parse_args() {
                 ;;
             --name=*)
                 sandbox_name_override=${1#--name=}
+                shift
+                ;;
+            --with-proxy)
+                relay_with_proxy=1
                 shift
                 ;;
             -h|--help)

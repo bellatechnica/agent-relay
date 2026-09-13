@@ -47,10 +47,28 @@ fi
 # The identity does not include the workspace's full host path, so a different
 # directory with the same basename reuses the first sandbox's mounts. Inspect
 # `sbx ls` and rename or recreate when that is not what you want.
+# The sandbox's HTTP(S)_PROXY variables point every request at the Docker
+# Sandbox proxy, which terminates TLS to inject credentials. That intercept
+# broke long streamed responses for a first-party Anthropic run on
+# 2026-09-10: four requests stalled mid-stream and were cut by the client's
+# 180-second watchdog, while the same model on the host, unproxied, streamed
+# 12k-token responses without trouble. Third-party routes were unaffected
+# because their hosts bypass the proxy. The proxy is not providing egress
+# containment here — the global policy is default-allow-all — so the default
+# is now to disable it and let the sandbox's own credentials authenticate.
+# Pass --with-proxy to restore the previous behaviour.
+#
+# These apply at CREATE only: an existing sandbox keeps the environment it was
+# built with, so an already-proxied sandbox must be recreated to change this.
+proxy_env=()
+if [[ -z "${relay_with_proxy:-}" ]]; then
+    proxy_env=(-e HTTP_PROXY= -e HTTPS_PROXY= -e http_proxy= -e https_proxy=)
+fi
+
 sandbox_created=
 if ! relay_sandbox_exists "$sandbox_name"; then
     sbx create --no-share-skills --name "$sandbox_name" \
-        claude "${mounts[@]}"
+        "${proxy_env[@]}" claude "${mounts[@]}"
     sbx policy allow network --sandbox "$sandbox_name" localhost:8787
     sandbox_created=1
 fi
