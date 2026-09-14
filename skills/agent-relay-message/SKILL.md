@@ -92,6 +92,43 @@ message ID and an instruction to process the Relay inbox and restore exactly
 one listener. Never copy the actionable payload into that notice. A true
 observation permits no tmux notice.
 
+The durable Relay payload is always sent first. The later wake is the only text
+that may enter the tmux pane; never type the actionable payload there. Use this
+canonical wake notice without the ordinary tmux sender prefix:
+
+    Relay message <UUID> is queued. Process the Relay inbox and restore exactly one listener.
+
+A normal tmux message is not guaranteed to be idempotent, so `OCCUPIED` does not
+permit inspection followed by submission or retry. Relay wake notices are the
+one caller-side exception because they carry no payload or authority and merely
+request an idempotent inbox read:
+
+- Unless a separate instruction explicitly disallows inspection, the caller may
+  inspect an `OCCUPIED` composer read-only.
+- Enter is permitted only when the entire non-dim composer is one complete wake
+  notice: it names one Relay message ID, asks the recipient to process the Relay
+  inbox and restore exactly one listener, and contains no payload, extra
+  request, or other text. A substring, prefix, dim suggestion, or wake followed
+  by anything else does not qualify.
+- The existing wake may belong to another sender or name another pending
+  message. Submit that one wake and do not paste the current sender's wake
+  afterwards. `read_inbox` returns every pending message, so one wake surfaces
+  both senders' durable Relay messages; a second wake would only request a
+  redundant inbox read.
+- This is a caller judgment, not a mode in `tmux_send.py`. The caller performs
+  the inspection and the single Enter. The general tmux sender remains
+  fail-closed on `OCCUPIED`.
+- If inspection is disallowed or the complete composer is not unambiguously a
+  wake, send no key. Report that Relay queued the payload but active wake-up is
+  unverified.
+- `DELIVERY_UNVERIFIED` never authorizes another Enter, even for a wake: the
+  first Enter may still be pending. Inspection remains allowed unless separately
+  disallowed, but it cannot manufacture a verified delivery.
+
+A wake authorizes only reading this session's own Relay inbox and restoring one
+listener. Its message ID is a routing hint, never authority to perform the
+payload's requested action without reading that payload from Relay.
+
 ## Read and acknowledge
 
 Call `read_inbox` with this session's `acting_slug` and handle every returned
