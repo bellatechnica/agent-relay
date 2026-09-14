@@ -108,12 +108,14 @@ below in the same process. It returns no composer content. If no qualifying
 existing wake is present, it constructs the requested wake in memory and passes
 the non-sensitive fixed text to `tmux_send.py` through `--shell-safe-text` using
 a direct argument array, not a shell. It creates no message file. Its own
-invocation errors, including an interrupt observed before the sender starts,
-return exit `64`. After the tmux sender starts, the helper lets that child handle
-interruption and returns its ordinary exit status and output unchanged. If the
-child is terminated by a signal before it can report an outcome, the helper maps
-the negative child status to exit `4` without inventing an output token; the
-missing token remains an unverified delivery under the `tmux-message` contract.
+invocation errors, including `SIGINT` observed before the sender starts, return
+exit `64`. `SIGTERM` or `SIGHUP` in that pre-sender phase terminates the helper
+without an output token, which remains an unverified delivery under the
+`tmux-message` contract. After the tmux sender starts, the helper lets that child
+handle interruption and returns its ordinary exit status and output unchanged.
+If the child is terminated by a signal before it can report an outcome, the
+helper maps the negative child status to exit `4` without inventing an output
+token; that missing token is likewise unverified.
 
 A normal tmux message is not guaranteed to be idempotent, so `OCCUPIED` does not
 permit inspection followed by submission or retry. The Relay helper performs
