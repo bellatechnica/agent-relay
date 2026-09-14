@@ -205,9 +205,10 @@ When the relay channel is selected, the spawning session must:
    `tmux-message`.
 6. Inspect `recipient_waiting_at_send` after every successful send or reply. If
    it is `true`, do not inject a tmux message. If it is `false` and the recipient
-   is reachable through the same tmux server, invoke the `tmux-message` skill to
-   send only a wake notice containing the Relay message ID and an instruction to
-   process the Relay inbox and restore exactly one listener. Do not copy the
+   is reachable through the same tmux server, invoke the `agent-relay-message`
+   wake helper, which sends through `tmux-message`, to send only a wake notice
+   containing the Relay message ID and an instruction to process the Relay inbox
+   and restore exactly one listener. Do not copy the
    actionable message content into the wake notice.
 
 The existing `tmux-message` path remains available as an explicit user-selected

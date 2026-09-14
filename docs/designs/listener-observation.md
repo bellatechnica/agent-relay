@@ -2,8 +2,9 @@
 
 Implementers must treat `recipient_waiting_at_send` as a point-in-time
 observation, not a delivery receipt. The durable message remains authoritative;
-the observation only decides whether a local handoff should attempt a tmux wake
-notice.
+the observation only decides whether a local sender that already knows the
+recipient's tmux recovery address and can reach that tmux server, in a handoff
+or not, should attempt a tmux wake notice.
 
 The required behavior is defined in [Agent Relay requirements](../requirements.md#delivery-and-wake-up-boundary).
 
@@ -91,7 +92,7 @@ step legitimately changes the result to `true`.
 
 Each cell names the guard between a state writer and work already in flight.
 
-| State writer | Send or reply observing a recipient | MCP wait or listener stream checking the durable inbox | Handoff deciding whether to wake |
+| State writer | Send or reply observing a recipient | MCP wait or listener stream checking the durable inbox | Sender with a known recovery address deciding whether to wake |
 | --- | --- | --- | --- |
 | Wait registers | Shared hub lock orders registration before or after observation. | Registration happens before the first inbox check. | The captured send result is immutable. |
 | Send or reply commits and notifies | SQLite commits before the hub observation and event set. | Inbox check plus event semantics prevent a commit from being missed. | The returned boolean and message ID come from the same send operation. |
