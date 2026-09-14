@@ -119,12 +119,15 @@ helper maps the negative child status to exit `4` without inventing an output
 token; that missing token is likewise unverified.
 
 A normal tmux message is not guaranteed to be idempotent, so `OCCUPIED` does not
-permit inspection followed by submission or retry. The Relay helper performs
-one automatic exception for wake notices because they carry no payload or
-authority and merely request an idempotent inbox read:
+permit direct inspection followed by submission or retry. Direct inspection is
+the caller itself reading pane or tmux state, as defined in `tmux-message`. The
+Relay helper performs one automatic exception for wake notices because they
+carry no payload or authority and merely request an idempotent inbox read:
 
-- The helper always inspects before sending, but never returns or prints composer
-  content.
+- The helper always captures the target internally before sending and never
+  returns or prints composer content. That capture is part of sending, not
+  direct inspection, so an instruction disallowing direct inspection does not
+  restrict it.
 - The helper sends exactly one Enter only when the entire non-dim composer
   full-matches the
   canonical line above, with `<UUID>` replaced by a lowercase hexadecimal UUID
@@ -145,8 +148,8 @@ authority and merely request an idempotent inbox read:
   `wake-interrupted`, or `wake-internal-error` means the reconciliation Enter
   may have reached the pane. Do not invoke the helper again automatically.
 - `DELIVERY_UNVERIFIED` never authorizes another Enter, even for a wake: the
-  first Enter may still be pending. Inspection remains allowed unless separately
-  disallowed, but it cannot manufacture a verified delivery.
+  first Enter may still be pending. Direct inspection remains allowed unless
+  separately disallowed, but it cannot manufacture a verified delivery.
 
 This occupied-wake exception deliberately retains a capture-to-Enter race. The
 fixed-format, idempotent wake contract makes that accepted tradeoff specific to
