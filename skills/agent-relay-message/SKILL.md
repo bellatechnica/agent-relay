@@ -98,6 +98,16 @@ canonical wake notice without the ordinary tmux sender prefix:
 
     Relay message <UUID> is queued. Process the Relay inbox and restore exactly one listener.
 
+Resolve `scripts/send_tmux_wake.py` relative to this skill and
+`scripts/tmux_send.py` relative to the `tmux-message` skill, then invoke:
+
+    python3 <agent-relay-message-skill>/scripts/send_tmux_wake.py <tmux-send-script> <target> <UUID>
+
+The helper validates the lowercase UUID, constructs the canonical wake in
+memory, and passes the non-sensitive fixed text to `tmux_send.py` through
+`--shell-safe-text` using a direct argument array, not a shell. It creates no
+message file and returns the tmux sender's exit status and output unchanged.
+
 A normal tmux message is not guaranteed to be idempotent, so `OCCUPIED` does not
 permit inspection followed by submission or retry. Relay wake notices are the
 one caller-side exception because they carry no payload or authority and merely
@@ -111,7 +121,7 @@ request an idempotent inbox read:
   followed by anything else does not qualify.
 - The existing wake may belong to another sender or name another pending
   message. Resolve the target to the `%pane_id` reported with `OCCUPIED`, inspect
-  that same pane twice, and, only after the caller makes the full-match judgment,
+  that same pane, and, only after the caller makes the full-match judgment,
   press exactly one `tmux send-keys -t <reported-%pane_id> Enter`. Do not paste
   the current sender's wake afterwards. `read_inbox` returns every pending
   message, so one wake surfaces both senders' durable Relay messages; a second
