@@ -454,7 +454,8 @@ When a send across the sandbox boundary reports
 `recipient_waiting_at_send = false`, the sender reports that the message is
 queued and active wake-up is unverified. It must not expose a tmux socket to the
 sandbox or copy the actionable payload into another channel. A local host-to-host
-handoff may instead send the conditional tmux wake notice described in the
+sender that already knows the recipient's tmux recovery address may instead send
+the conditional tmux wake notice described in the
 [direct-session guide](direct-sessions.md#4-establish-the-two-way-workflow).
 
 ## Optional token authentication

@@ -101,8 +101,9 @@ as long as its mailbox stays quiet. The
 [`agent-relay-message`](skills/agent-relay-message) skill contains the exact
 client rules. The `handoff` workflow includes both slugs and starts listeners
 on both sides. Agent Relay is its default durable message channel. When a send
-reports that no recipient MCP wait was active, a local handoff uses tmux only to
-wake the recipient; the actionable content remains in Relay.
+reports that no recipient MCP wait was active, any local sender that already
+knows the recipient's tmux recovery address, in a handoff or not, uses tmux only
+to wake the recipient; the actionable content remains in Relay.
 
 Use [the direct-session guide](docs/direct-sessions.md) when the relay and
 agents share a host. Use [the Docker Sandbox guide](docs/docker-sandbox.md) to

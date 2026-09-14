@@ -56,8 +56,8 @@ through `/mcp` that `agent_relay` is connected before using this skill.
 
 The pane-inspection, occupied-composer, bracketed-paste, and empty-composer
 checks in `tmux-message` do not apply to the Relay payload call because it
-injects no keystrokes. They do apply when a handoff sends a conditional tmux
-wake notice.
+injects no keystrokes. They do apply to the conditional tmux wake notice
+described under Send.
 
 ## Establish this session's slug
 
@@ -83,14 +83,15 @@ Inspect `recipient_waiting_at_send` in every successful `send_message` or
 `reply_to_message` result. `true` means the relay observed an active recipient
 MCP wait when it notified the recipient; it does not prove processing or later
 listener replacement. `false` means the message is durable but no MCP wait was
-observed. Outside a handoff with a known tmux recovery address, report the false
-observation without inventing another delivery channel.
+observed.
 
-In a Relay-based handoff, follow the `handoff` skill's conditional wake rule. A
-false observation permits one `tmux-message` wake notice containing the Relay
-message ID and an instruction to process the Relay inbox and restore exactly
-one listener. Never copy the actionable payload into that notice. A true
-observation permits no tmux notice.
+Whenever this session already knows a tmux recovery address for the recipient
+and can reach that tmux server, a false observation permits one wake notice sent
+through the wake helper below, whether or not the session is part of a handoff.
+The notice contains only the Relay message ID and an instruction to process the
+Relay inbox and restore exactly one listener. Never copy the actionable payload into that notice. A true
+observation permits no tmux notice. Without a known recovery address, report the
+false observation without inventing another delivery channel.
 
 The durable Relay payload is always sent first. The later wake is the only text
 that may enter the tmux pane; never type the actionable payload there. Use this

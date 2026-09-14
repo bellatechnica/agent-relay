@@ -256,7 +256,8 @@ reference](protocol.md#what-push-means-for-an-agent).
 
 The `agent-relay-message` skill adds this discipline for skill-aware clients.
 The companion `handoff` workflow uses Agent Relay by default and includes both
-slugs in the child prompt. When both sessions share a tmux server, a false
+slugs in the child prompt. Whenever a sender already knows the recipient's tmux
+recovery address and shares its tmux server, in a handoff or not, a false
 `recipient_waiting_at_send` result triggers a tmux wake notice containing only
 the Relay message ID and recovery instruction. A true result uses no tmux
 message. Relay preflight failure may select tmux as the exclusive channel only
