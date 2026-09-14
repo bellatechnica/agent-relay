@@ -5,6 +5,7 @@ import io
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -24,9 +25,149 @@ SPEC.loader.exec_module(send_tmux_wake)
 
 
 MESSAGE_ID = "073d8462-5295-4c49-91ec-42a5dbc49187"
+OTHER_MESSAGE_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+
+
+def fake_sender_module(composer, *, cleared: bool = True):
+    pane = SimpleNamespace(pane_id="%9", socket_path="/tmp/tmux.sock")
+    observed = SimpleNamespace(state="OCCUPIED", composer=composer, detail="")
+    clear_result = SimpleNamespace(state="CLEAR", composer=None, detail="")
+    return SimpleNamespace(
+        OCCUPIED="OCCUPIED",
+        resolve_target=mock.Mock(return_value=(pane, "", "")),
+        capture_target=mock.Mock(return_value=observed),
+        _tmux=mock.Mock(return_value=SimpleNamespace(returncode=0, stderr="")),
+        _wait_for_clear=mock.Mock(return_value=clear_result),
+        _submit_cleared=mock.Mock(return_value=cleared),
+    )
 
 
 class TmuxWakeTests(unittest.TestCase):
+    def test_existing_canonical_wake_is_submitted_once(self) -> None:
+        composer = SimpleNamespace(
+            text=send_tmux_wake.canonical_wake(OTHER_MESSAGE_ID),
+            has_non_dim_text=True,
+            has_dim_text=False,
+        )
+        sender_module = fake_sender_module(composer)
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(
+                send_tmux_wake, "_load_tmux_sender", return_value=sender_module
+            ),
+            mock.patch("sys.stdout", stdout),
+        ):
+            code = send_tmux_wake.submit_existing_wake(
+                Path("tmux_send.py"), "session:window.0"
+            )
+        self.assertEqual((code, stdout.getvalue()), (0, "SENT\n"))
+        sender_module._tmux.assert_called_once_with(
+            "send-keys", "-t", "%9", "Enter"
+        )
+        sender_module._wait_for_clear.assert_called_once()
+
+    def test_dim_or_mixed_wake_is_not_submitted(self) -> None:
+        for has_dim, suffix in ((True, ""), (True, " extra"), (False, " extra")):
+            with self.subTest(has_dim=has_dim, suffix=suffix):
+                composer = SimpleNamespace(
+                    text=send_tmux_wake.canonical_wake(MESSAGE_ID) + suffix,
+                    has_non_dim_text=True,
+                    has_dim_text=has_dim,
+                )
+                sender_module = fake_sender_module(composer)
+                with mock.patch.object(
+                    send_tmux_wake,
+                    "_load_tmux_sender",
+                    return_value=sender_module,
+                ):
+                    code = send_tmux_wake.submit_existing_wake(
+                        Path("tmux_send.py"), "session:window.0"
+                    )
+                self.assertIsNone(code)
+                sender_module._tmux.assert_not_called()
+
+    def test_existing_wake_that_does_not_clear_is_unverified(self) -> None:
+        secret = send_tmux_wake.canonical_wake(MESSAGE_ID)
+        composer = SimpleNamespace(
+            text=secret,
+            has_non_dim_text=True,
+            has_dim_text=False,
+        )
+        sender_module = fake_sender_module(composer, cleared=False)
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(
+                send_tmux_wake, "_load_tmux_sender", return_value=sender_module
+            ),
+            mock.patch("sys.stdout", stdout),
+            mock.patch("sys.stderr", stderr),
+        ):
+            code = send_tmux_wake.submit_existing_wake(
+                Path("tmux_send.py"), "session:window.0"
+            )
+        self.assertEqual(
+            (code, stdout.getvalue()),
+            (4, "DELIVERY_UNVERIFIED wake-not-cleared\n"),
+        )
+        self.assertNotIn(secret, stderr.getvalue())
+
+    def test_exception_after_reconciliation_enter_is_unverified(self) -> None:
+        composer = SimpleNamespace(
+            text=send_tmux_wake.canonical_wake(MESSAGE_ID),
+            has_non_dim_text=True,
+            has_dim_text=False,
+        )
+        sender_module = fake_sender_module(composer)
+        sender_module._wait_for_clear.side_effect = RuntimeError("private pane data")
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(
+                send_tmux_wake, "_load_tmux_sender", return_value=sender_module
+            ),
+            mock.patch("sys.stdout", stdout),
+            mock.patch("sys.stderr", stderr),
+        ):
+            code = send_tmux_wake.submit_existing_wake(
+                Path("tmux_send.py"), "session:window.0"
+            )
+        self.assertEqual(
+            (code, stdout.getvalue()),
+            (4, "DELIVERY_UNVERIFIED wake-internal-error\n"),
+        )
+        self.assertNotIn("private pane data", stderr.getvalue())
+
+    def test_main_reconciles_before_starting_sender(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sender = Path(directory) / "tmux_send.py"
+            sender.write_text("# test sender\n", encoding="utf-8")
+            with (
+                mock.patch.object(
+                    send_tmux_wake, "submit_existing_wake", return_value=0
+                ) as reconcile,
+                mock.patch.object(send_tmux_wake, "send_wake") as send,
+            ):
+                code = send_tmux_wake.main(
+                    [str(sender), "session:window.0", MESSAGE_ID]
+                )
+        self.assertEqual(code, 0)
+        reconcile.assert_called_once_with(sender, "session:window.0")
+        send.assert_not_called()
+
+    def test_invalid_requested_uuid_is_rejected_before_reconciliation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sender = Path(directory) / "tmux_send.py"
+            sender.write_text("# test sender\n", encoding="utf-8")
+            with mock.patch.object(
+                send_tmux_wake, "submit_existing_wake"
+            ) as reconcile, mock.patch("sys.stderr", io.StringIO()):
+                code = send_tmux_wake.main(
+                    [str(sender), "session:window.0", "not-a-uuid"]
+                )
+        self.assertEqual(code, 64)
+        reconcile.assert_not_called()
+
     def test_valid_wake_uses_tmux_sender_shell_safe_text(self) -> None:
         observed = {}
 

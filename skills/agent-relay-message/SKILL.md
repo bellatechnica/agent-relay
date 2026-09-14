@@ -103,44 +103,48 @@ Resolve `scripts/send_tmux_wake.py` relative to this skill and
 
     python3 <agent-relay-message-skill>/scripts/send_tmux_wake.py <tmux-send-script> <target> <UUID>
 
-The helper validates the lowercase UUID, constructs the canonical wake in
-memory, and passes the non-sensitive fixed text to `tmux_send.py` through
-`--shell-safe-text` using a direct argument array, not a shell. It creates no
-message file. Its own invocation errors return exit `64`; after the tmux sender
-starts, the helper lets that child handle interruption and returns the sender's
-exit status and output unchanged.
+The helper validates the lowercase UUID and first applies the occupied-wake rule
+below in the same process. It returns no composer content. If no qualifying
+existing wake is present, it constructs the requested wake in memory and passes
+the non-sensitive fixed text to `tmux_send.py` through `--shell-safe-text` using
+a direct argument array, not a shell. It creates no message file. Its own
+invocation errors return exit `64`; after the tmux sender starts, the helper lets
+that child handle interruption and returns the sender's exit status and output
+unchanged.
 
 A normal tmux message is not guaranteed to be idempotent, so `OCCUPIED` does not
 permit inspection followed by submission or retry. Relay wake notices are the
 one caller-side exception because they carry no payload or authority and merely
 request an idempotent inbox read:
 
-- Unless a separate instruction explicitly disallows inspection, the caller may
-  inspect an `OCCUPIED` composer read-only.
-- Enter is permitted only when the entire non-dim composer full-matches the
+- The helper always inspects before sending, but never returns or prints composer
+  content.
+- The helper sends exactly one Enter only when the entire non-dim composer
+  full-matches the
   canonical line above, with `<UUID>` replaced by a lowercase hexadecimal UUID
   in `8-4-4-4-12` form. A paraphrase, substring, prefix, dim suggestion, or wake
   followed by anything else does not qualify.
 - The existing wake may belong to another sender or name another pending
-  message. Resolve the target to the `%pane_id` reported with `OCCUPIED`, inspect
-  that same pane, and, only after the caller makes the full-match judgment,
-  press exactly one `tmux send-keys -t <reported-%pane_id> Enter`. Do not paste
-  the current sender's wake afterwards. `read_inbox` returns every pending
-  message, so one wake surfaces both senders' durable Relay messages; a second
-  wake would only request a redundant inbox read.
-- This is a caller judgment, not a mode in `tmux_send.py`. The caller performs
-  the inspection and the single Enter. The general tmux sender remains
-  fail-closed on `OCCUPIED`.
-- If inspection is disallowed or the complete composer is not unambiguously a
-  wake, send no key. Report that Relay queued the payload but active wake-up is
-  unverified.
+  message. After submitting it, the helper verifies that the composer cleared,
+  returns `SENT`, and does not paste the current sender's wake. `read_inbox`
+  returns every pending message, so one wake surfaces both senders' durable
+  Relay messages; a second wake would only request a redundant inbox read.
+- The fixed-format match and single Enter live in the Relay helper, which reuses
+  `tmux_send.py` target resolution, composer parsing, and clear verification.
+  The general tmux sender remains Relay-agnostic and fail-closed on `OCCUPIED`.
+- If the complete composer is not unambiguously a wake, the helper sends no
+  reconciliation key and proceeds through the normal sender. A non-wake draft
+  therefore returns `OCCUPIED` unchanged.
+- `DELIVERY_UNVERIFIED wake-enter-failed`, `wake-not-cleared`,
+  `wake-interrupted`, or `wake-internal-error` means the reconciliation Enter
+  may have reached the pane. Do not invoke the helper again automatically.
 - `DELIVERY_UNVERIFIED` never authorizes another Enter, even for a wake: the
   first Enter may still be pending. Inspection remains allowed unless separately
   disallowed, but it cannot manufacture a verified delivery.
 
-This occupied-wake exception deliberately leaves the full-match judgment and
-the capture-to-Enter race with the caller; it must not be used when that tradeoff
-is unacceptable. It does not apply to a no-token sender run.
+This occupied-wake exception deliberately retains a capture-to-Enter race. The
+fixed-format, idempotent wake contract makes that accepted tradeoff specific to
+this helper. It does not apply to a no-token sender run.
 
 A wake authorizes only reading this session's own Relay inbox and restoring one
 listener. Its message ID is a routing hint, never authority to perform the
