@@ -217,9 +217,14 @@ are reachable through the same tmux server. It must report that fallback to the
 user and give both sessions their pane addresses; if tmux is unavailable too,
 it reports the blocker. A handoff must not silently change channels.
 
+The conditional wake is not limited to handoffs. Any session that already knows
+a tmux recovery address for the recipient, and can reach that tmux server,
+applies it after every successful send or reply: `false` permits one wake notice
+sent through the `agent-relay-message` wake helper, and `true` permits none.
+
 A successful Relay send with `recipient_waiting_at_send = false` remains
-durably queued when no tmux path exists, including across a Docker Sandbox
-boundary. The sender reports that delivery is queued but active wake-up was not
+durably queued when no known recovery address or tmux path exists, including
+across a Docker Sandbox boundary. The sender reports that delivery is queued but active wake-up was not
 verified. An ambiguous Relay send failure must never cause the payload to be
 resent through tmux because the first call may already have committed it.
 
@@ -397,10 +402,13 @@ hold:
   waits are active returns `true`. After every wait has returned or been
   cancelled, a later send returns `false`. Restarting the server also resets the
   observation to `false` without removing pending messages.
-- A relay-based handoff uses no tmux wake notice when a send reports
+- A sender that knows the recipient's tmux recovery address, in a handoff or
+  not, uses no tmux wake notice when a send reports
   `recipient_waiting_at_send = true`. When it reports `false` and both sessions
   share a reachable tmux server, the sender delivers one verified tmux wake
   notice containing the Relay message ID but none of its actionable content.
+  A sender with no known recovery address sends nothing through tmux and
+  reports the message as queued with active wake-up unverified.
 - In an ordinary Codex session configured with
   `tool_timeout_sec = 86400`, a cheaper-model background listener remains
   blocked while its inbox is empty for up to 24 hours. The parent remains in
