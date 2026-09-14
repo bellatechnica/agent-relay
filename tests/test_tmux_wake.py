@@ -30,18 +30,25 @@ class TmuxWakeTests(unittest.TestCase):
     def test_valid_wake_uses_tmux_sender_shell_safe_text(self) -> None:
         observed = {}
 
-        child = mock.Mock()
-        child.wait.return_value = 2
-
-        def popen(command, **kwargs):
-            observed.update(command=command, kwargs=kwargs)
-            return child
+        def posix_spawn(path, arguments, environment, **kwargs):
+            observed.update(
+                path=path,
+                arguments=arguments,
+                environment=environment,
+                kwargs=kwargs,
+            )
+            return 321
 
         with tempfile.TemporaryDirectory() as directory:
             sender = Path(directory) / "tmux_send.py"
             sender.write_text("# test sender\n", encoding="utf-8")
-            with mock.patch.object(
-                send_tmux_wake.subprocess, "Popen", side_effect=popen
+            with (
+                mock.patch.object(
+                    send_tmux_wake.os, "posix_spawn", side_effect=posix_spawn
+                ),
+                mock.patch.object(
+                    send_tmux_wake.os, "waitpid", return_value=(321, 2 << 8)
+                ),
             ):
                 code = send_tmux_wake.send_wake(
                     sender, "session:window.0", MESSAGE_ID
@@ -49,7 +56,7 @@ class TmuxWakeTests(unittest.TestCase):
 
         self.assertEqual(code, 2)
         self.assertEqual(
-            observed["command"],
+            observed["arguments"],
             [
                 sys.executable,
                 str(sender),
@@ -59,25 +66,28 @@ class TmuxWakeTests(unittest.TestCase):
                 "Process the Relay inbox and restore exactly one listener.",
             ],
         )
-        self.assertEqual(observed["kwargs"], {})
-        child.wait.assert_called_once_with()
+        self.assertEqual(observed["path"], sys.executable)
+        self.assertIs(observed["environment"], send_tmux_wake.os.environ)
+        self.assertIn("setsigmask", observed["kwargs"])
 
     def test_parent_signal_during_wait_leaves_child_to_report(self) -> None:
-        child = mock.Mock()
-
-        def wait():
+        def waitpid(_pid, _options):
             handler = send_tmux_wake.signal.getsignal(
                 send_tmux_wake.signal.SIGINT
             )
             handler(send_tmux_wake.signal.SIGINT, None)
-            return 4
+            return 321, 4 << 8
 
-        child.wait.side_effect = wait
         with tempfile.TemporaryDirectory() as directory:
             sender = Path(directory) / "tmux_send.py"
             sender.write_text("# test sender\n", encoding="utf-8")
-            with mock.patch.object(
-                send_tmux_wake.subprocess, "Popen", return_value=child
+            with (
+                mock.patch.object(
+                    send_tmux_wake.os, "posix_spawn", return_value=321
+                ),
+                mock.patch.object(
+                    send_tmux_wake.os, "waitpid", side_effect=waitpid
+                ),
             ):
                 code = send_tmux_wake.send_wake(
                     sender, "session:window.0", MESSAGE_ID
