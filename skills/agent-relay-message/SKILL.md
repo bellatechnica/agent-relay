@@ -106,7 +106,9 @@ Resolve `scripts/send_tmux_wake.py` relative to this skill and
 The helper validates the lowercase UUID, constructs the canonical wake in
 memory, and passes the non-sensitive fixed text to `tmux_send.py` through
 `--shell-safe-text` using a direct argument array, not a shell. It creates no
-message file and returns the tmux sender's exit status and output unchanged.
+message file. Its own invocation errors return exit `64`; after the tmux sender
+starts, the helper lets that child handle interruption and returns the sender's
+exit status and output unchanged.
 
 A normal tmux message is not guaranteed to be idempotent, so `OCCUPIED` does not
 permit inspection followed by submission or retry. Relay wake notices are the

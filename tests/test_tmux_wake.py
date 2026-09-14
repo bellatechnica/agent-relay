@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import io
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -31,14 +30,19 @@ class TmuxWakeTests(unittest.TestCase):
     def test_valid_wake_uses_tmux_sender_shell_safe_text(self) -> None:
         observed = {}
 
-        def run(command, **kwargs):
+        child = mock.Mock()
+        child.wait.return_value = 2
+
+        def popen(command, **kwargs):
             observed.update(command=command, kwargs=kwargs)
-            return subprocess.CompletedProcess(command, 2)
+            return child
 
         with tempfile.TemporaryDirectory() as directory:
             sender = Path(directory) / "tmux_send.py"
             sender.write_text("# test sender\n", encoding="utf-8")
-            with mock.patch.object(send_tmux_wake.subprocess, "run", side_effect=run):
+            with mock.patch.object(
+                send_tmux_wake.subprocess, "Popen", side_effect=popen
+            ):
                 code = send_tmux_wake.send_wake(
                     sender, "session:window.0", MESSAGE_ID
                 )
@@ -55,7 +59,30 @@ class TmuxWakeTests(unittest.TestCase):
                 "Process the Relay inbox and restore exactly one listener.",
             ],
         )
-        self.assertFalse(observed["kwargs"]["check"])
+        self.assertEqual(observed["kwargs"], {})
+        child.wait.assert_called_once_with()
+
+    def test_parent_signal_during_wait_leaves_child_to_report(self) -> None:
+        child = mock.Mock()
+
+        def wait():
+            handler = send_tmux_wake.signal.getsignal(
+                send_tmux_wake.signal.SIGINT
+            )
+            handler(send_tmux_wake.signal.SIGINT, None)
+            return 4
+
+        child.wait.side_effect = wait
+        with tempfile.TemporaryDirectory() as directory:
+            sender = Path(directory) / "tmux_send.py"
+            sender.write_text("# test sender\n", encoding="utf-8")
+            with mock.patch.object(
+                send_tmux_wake.subprocess, "Popen", return_value=child
+            ):
+                code = send_tmux_wake.send_wake(
+                    sender, "session:window.0", MESSAGE_ID
+                )
+        self.assertEqual(code, 4)
 
     def test_uppercase_uuid_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "lowercase"):
@@ -75,6 +102,13 @@ class TmuxWakeTests(unittest.TestCase):
                 )
         self.assertEqual(code, 64)
         self.assertIn("not a regular file", stderr.getvalue())
+
+    def test_missing_arguments_return_usage_not_dialog(self) -> None:
+        stderr = io.StringIO()
+        with mock.patch("sys.stderr", stderr):
+            code = send_tmux_wake.main([])
+        self.assertEqual(code, 64)
+        self.assertIn("wake error", stderr.getvalue())
 
 
 if __name__ == "__main__":
