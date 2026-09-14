@@ -102,11 +102,11 @@ def submit_existing_wake(tmux_sender: Path, target: str) -> int | None:
             raise KeyboardInterrupt(signal_number)
 
     previous_handlers = {}
-    for signal_number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        previous_handlers[signal_number] = signal.getsignal(signal_number)
-        signal.signal(signal_number, raise_before_outcome)
     enter_issued = False
     try:
+        for signal_number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            previous_handlers[signal_number] = signal.getsignal(signal_number)
+            signal.signal(signal_number, raise_before_outcome)
         enter_issued = True
         submit = sender._tmux("send-keys", "-t", pane.pane_id, "Enter")
         if submit.returncode != 0:
@@ -160,6 +160,8 @@ def send_wake(tmux_sender: Path, target: str, message_id: str) -> int:
             "--shell-safe-text",
             wake,
         ]
+        if signal.sigpending() & managed_signals:
+            raise InterruptedError("interrupted before sender started")
         child_pid = os.posix_spawn(
             sys.executable,
             arguments,
@@ -171,7 +173,8 @@ def send_wake(tmux_sender: Path, target: str, message_id: str) -> int:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         mask_restored = True
         _pid, status = os.waitpid(child_pid, 0)
-        return os.waitstatus_to_exitcode(status)
+        exit_code = os.waitstatus_to_exitcode(status)
+        return exit_code if exit_code >= 0 else EXIT_DELIVERY_UNVERIFIED
     finally:
         if not mask_restored:
             signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
@@ -198,6 +201,9 @@ def main(argv: list[str] | None = None) -> int:
         if reconciled is not None:
             return reconciled
         return send_wake(args.tmux_sender, args.target, args.message_id)
+    except KeyboardInterrupt:
+        print("wake error: interrupted", file=sys.stderr)
+        return EXIT_USAGE
     except (OSError, UsageError, ValueError) as error:
         print(f"wake error: {error}", file=sys.stderr)
         return EXIT_USAGE

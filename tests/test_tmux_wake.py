@@ -235,6 +235,117 @@ class TmuxWakeTests(unittest.TestCase):
                 )
         self.assertEqual(code, 4)
 
+    def test_pending_signal_prevents_sender_spawn(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sender = Path(directory) / "tmux_send.py"
+            sender.write_text("# test sender\n", encoding="utf-8")
+            with (
+                mock.patch.object(
+                    send_tmux_wake.signal,
+                    "sigpending",
+                    return_value={send_tmux_wake.signal.SIGINT},
+                ),
+                mock.patch.object(send_tmux_wake.os, "posix_spawn") as spawn,
+            ):
+                with self.assertRaisesRegex(
+                    InterruptedError, "before sender started"
+                ):
+                    send_tmux_wake.send_wake(
+                        sender, "session:window.0", MESSAGE_ID
+                    )
+        spawn.assert_not_called()
+
+    def test_signal_killed_sender_maps_to_delivery_unverified(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sender = Path(directory) / "tmux_send.py"
+            sender.write_text("# test sender\n", encoding="utf-8")
+            with (
+                mock.patch.object(
+                    send_tmux_wake.os, "posix_spawn", return_value=321
+                ),
+                mock.patch.object(
+                    send_tmux_wake.os, "waitpid", return_value=(321, 9)
+                ),
+                mock.patch.object(
+                    send_tmux_wake.os,
+                    "waitstatus_to_exitcode",
+                    return_value=-9,
+                ),
+            ):
+                code = send_tmux_wake.send_wake(
+                    sender, "session:window.0", MESSAGE_ID
+                )
+        self.assertEqual(code, 4)
+
+    def test_main_turns_keyboard_interrupt_into_usage_result(self) -> None:
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            sender = Path(directory) / "tmux_send.py"
+            sender.write_text("# test sender\n", encoding="utf-8")
+            with (
+                mock.patch.object(
+                    send_tmux_wake,
+                    "submit_existing_wake",
+                    side_effect=KeyboardInterrupt,
+                ),
+                mock.patch("sys.stderr", stderr),
+            ):
+                code = send_tmux_wake.main(
+                    [str(sender), "session:window.0", MESSAGE_ID]
+                )
+        self.assertEqual(code, 64)
+        self.assertEqual(stderr.getvalue(), "wake error: interrupted\n")
+
+    def test_interrupt_during_handler_setup_restores_changed_handlers(self) -> None:
+        composer = SimpleNamespace(
+            text=send_tmux_wake.canonical_wake(MESSAGE_ID),
+            has_non_dim_text=True,
+            has_dim_text=False,
+        )
+        sender_module = fake_sender_module(composer)
+        old_handlers = {
+            send_tmux_wake.signal.SIGINT: object(),
+            send_tmux_wake.signal.SIGTERM: object(),
+        }
+        calls = []
+
+        def getsignal(signal_number):
+            return old_handlers.get(signal_number, object())
+
+        def set_signal(signal_number, handler):
+            calls.append((signal_number, handler))
+            if len(calls) == 2:
+                raise KeyboardInterrupt
+
+        with (
+            mock.patch.object(
+                send_tmux_wake, "_load_tmux_sender", return_value=sender_module
+            ),
+            mock.patch.object(
+                send_tmux_wake.signal, "getsignal", side_effect=getsignal
+            ),
+            mock.patch.object(
+                send_tmux_wake.signal, "signal", side_effect=set_signal
+            ),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                send_tmux_wake.submit_existing_wake(
+                    Path("tmux_send.py"), "session:window.0"
+                )
+
+        self.assertIn(
+            (send_tmux_wake.signal.SIGINT, old_handlers[send_tmux_wake.signal.SIGINT]),
+            calls,
+        )
+        self.assertIn(
+            (
+                send_tmux_wake.signal.SIGTERM,
+                old_handlers[send_tmux_wake.signal.SIGTERM],
+            ),
+            calls,
+        )
+        sender_module._tmux.assert_not_called()
+
     def test_uppercase_uuid_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "lowercase"):
             send_tmux_wake.canonical_wake(MESSAGE_ID.upper())
