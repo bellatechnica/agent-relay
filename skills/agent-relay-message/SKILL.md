@@ -118,11 +118,12 @@ If the child is terminated by a signal before it can report an outcome, the
 helper maps the negative child status to exit `4` without inventing an output
 token; that missing token is likewise unverified.
 
-A normal tmux message is not guaranteed to be idempotent, so `OCCUPIED` does not
-permit direct inspection followed by submission or retry. Direct inspection is
-the caller itself reading pane or tmux state, as defined in `tmux-message`. The
-Relay helper performs one automatic exception for wake notices because they
-carry no payload or authority and merely request an idempotent inbox read:
+A normal tmux message is not guaranteed to be idempotent, so its `OCCUPIED`
+result follows the retry and inspection rules in `tmux-message`, never this
+exception. Direct inspection is the caller itself reading pane or tmux state,
+as defined in `tmux-message`. The Relay helper performs one automatic exception
+for wake notices because they carry no payload or authority and merely request
+an idempotent inbox read:
 
 - The helper always captures the target internally before sending and never
   returns or prints composer content. That capture is part of sending, not
