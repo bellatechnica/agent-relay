@@ -134,57 +134,26 @@ shown by `agent-relay --help`.
 
 ## Use from an agent session
 
-Configure `http://127.0.0.1:8787/mcp` once as the remote MCP server named
-`agent_relay`. Give each session a distinct slug and the other participant's
-exact slug, then instruct it to:
+Configure `http://127.0.0.1:8787/mcp` as a remote MCP server named
+`agent_relay` in each client, give each session a distinct slug, and tell it
+the other participant's exact slug.
 
-1. Call `register_session(slug, agent_kind)` at startup or resume.
-2. Call `read_inbox` once, handle every pending message in send order, and
-   acknowledge each only after processing it.
-3. Keep exactly one listener open: a single `wait_for_messages` call whose
-   complete result reaches the session unacknowledged. Codex, OpenCode and
-   Claude Code use a background subagent that returns the result verbatim; a
-   Claude Code that has shown this session it detaches long-running MCP calls
-   may issue the call in its own turn instead; Antigravity CLI blocks its turn
-   on the call.
-4. Handle the returned messages, acknowledge after processing, and start one
-   replacement listener. Acknowledgements for a processed batch belong in one
-   model turn rather than one turn each, because every turn resends the
-   session's whole context.
-5. Call `send_message` with its `acting_slug` and the recipient's exact slug;
-   use `reply_to_message` when responding to a received message, passing
-   `acknowledge: true` when that reply completes what the message asked for, and
-   inspect the returned `recipient_waiting_at_send` observation.
-
-The version-specific listener behavior of each client is recorded in the
-[protocol reference](docs/protocol.md#what-push-means-for-an-agent). OpenCode
-requires `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`; Claude Code
-detachment varies by release and must be observed in the session that relies on
-it, because an in-turn call that is not detached blocks that session's turn for
-as long as its mailbox stays quiet. The
-[`agent-relay-message`](skills/agent-relay-message) skill contains the exact
-client rules. The `handoff` workflow includes both slugs and starts listeners
-on both sides. Agent Relay is its default durable message channel. When a send
-reports that no recipient MCP wait was active, any local sender that already
-knows the recipient's tmux recovery address and can reach that tmux server, in a
-handoff or not, uses tmux only to wake the recipient; the actionable content
-remains in Relay.
-
-Use [the direct-session guide](docs/direct-sessions.md) when the relay and
-agents share a host. Use [the Docker Sandbox guide](docs/docker-sandbox.md) to
-configure Codex, Claude Code, or OpenCode, allow web access, and launch an
-isolated agent in automatic mode. See [the protocol
-reference](docs/protocol.md) when building a receiver or another client. On
-WSL, follow the [autostart guide](docs/autostart-wsl.md) to install a systemd
-user service and keep the VM running after terminals close.
-
-The [requirements](docs/requirements.md) define the slug workflow and handoff
-behavior that implementations must preserve.
-
-The repository includes an [`agent-relay-message`](skills/agent-relay-message)
-skill for skill-aware clients. It adds registration, acknowledgement, reply,
-and failure-handling discipline; the MCP tool descriptions remain sufficient
-for Claude Code or OpenCode installations that do not load this skill.
+- The [`agent-relay-message` skill](skills/agent-relay-message/SKILL.md) holds
+  the session-side rules: registering, reading and acknowledging the inbox,
+  keeping one listener open per client, replying, and sending the tmux wake-up.
+  Install it for skill-aware clients; for clients without it, the MCP tool
+  descriptions carry the essentials.
+- [`examples/`](examples) holds ready MCP configurations for Claude Code,
+  Codex, OpenCode, and Antigravity CLI. They address the relay as
+  `host.docker.internal` for use inside a Docker Sandbox; on the host, use
+  `127.0.0.1` as the [direct-session guide](docs/direct-sessions.md) shows.
+- [The Docker Sandbox guide](docs/docker-sandbox.md) covers configuring and
+  launching isolated agents; [the autostart guide](docs/autostart-wsl.md)
+  installs the relay as a systemd user service on WSL.
+- [The protocol reference](docs/protocol.md) is for building a receiver or
+  another client, and records each client's listener behavior;
+  [the requirements](docs/requirements.md) define the slug workflow and handoff
+  behavior that implementations must preserve.
 
 ## Security boundary
 
