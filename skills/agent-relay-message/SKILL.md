@@ -201,10 +201,13 @@ Then keep exactly one listener for this slug:
    acknowledgements remain for the batch together in one turn.
 5. Start one replacement listener after all returned messages are handled.
 
-Do not start a second listener while one is active. Do not poll `read_inbox` or
-repeat short waits; the MCP wait remains blocked until a message arrives or the
-configured client deadline expires. A listener reports durable delivery, not
-completed processing.
+Do not start a second `wait_for_messages` call while one is active, and do not
+poll `read_inbox`. One `wait_for_messages` call stays blocked on the relay until
+a message arrives or the client deadline expires. If its code-execution cell
+returns as still running, call the harness `wait` with that cell's identifier;
+this resumes the original cell and is not another relay listener. Lengthen that
+cell wait as specified below instead of accepting repeated short yields. A
+listener reports durable delivery, not completed processing.
 
 A blocked `wait_for_messages` sends no progress notification, so a client's
 silence limit is the only clock running on it. Raise that limit per server in
@@ -264,6 +267,40 @@ Use the control behavior supported by the current client:
   continue waiting for the same child. Do not return the parent to an idle
   prompt while its listener is active because Codex 0.147.0 does not start a
   parent turn when an already-detached child later finishes.
+
+  On Codex CLI 0.153.3, `agent_relay` MCP tools were exposed only inside a
+  code-execution cell; attempts to select `agent_relay` or `mcp__agent_relay`
+  through `direct_only_tool_namespaces` removed the tools instead of exposing
+  direct calls. A Codex CLI 0.156.1 listener also used the cell path. When the
+  running client exposes the relay this way, each still-running cell result
+  causes another model sampling pass and resends the session context. In the
+  final uninterrupted empty-listener span recorded by a Codex CLI 0.156.1
+  rollout on 2026-09-24, 35 such returns caused 35 sampling passes and 2,823,586
+  input tokens, about 80,674 input tokens per pass. This is a dated observation
+  of the cost mechanism, not a guarantee for another client version.
+
+  In an isolated 0.153.3 test, the default returned at 31.0 seconds, a 90,000 ms
+  yield returned at 91.0 seconds, and a 420,000 ms yield returned at 421.0
+  seconds. `yield_time_ms = 86400000` was accepted without a validation error
+  but was not observed for its full duration. Setting
+  `[code_mode] default_exec_yield_time_ms` did not change the 31.0-second
+  default in that test, so use the per-cell pragma and per-wait argument and
+  verify their live behavior with the acceptance criterion. A 0.153.3 listener
+  opened with that pragma against a live relay held its cell for 82.0 seconds
+  with no intermediate return and no harness `wait`, then completed on an
+  arriving message rather than on the yield, at a cost of two sampling passes;
+  the relay recorded its delivery attempt 24 milliseconds after the send. That
+  observation shows the pragma deferring an unfinished-cell return without
+  delaying delivery; it does not observe the full 86,400,000 ms interval.
+
+  Open every listener cell, including each replacement listener's new cell,
+  with the first-line pragma `// @exec: {"yield_time_ms": 86400000}`. If the
+  cell returns as still running, pass `yield_time_ms: 86400000` on every harness
+  `wait` for that cell. These values defer an unfinished-cell return; they do
+  not delay a relay message, cell completion or failure, explicit cancellation,
+  or the MCP tool deadline. Because the cell yield and MCP deadline are both 24
+  hours, do not infer their boundary ordering or claim that all listener
+  activity costs at most one sampling pass per day.
 - **OpenCode:** require
   `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in the environment inherited
   by the OpenCode process, then call `task` with `background: true`. Keep the

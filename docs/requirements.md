@@ -116,6 +116,14 @@ slug's inbox, reply to a message, and acknowledge a processed message.
   empty mailbox: a wait ended by a closing client connection can report
   completion with no payload while every message stays pending, so the session
   reads the inbox rather than treating that result as nothing to handle.
+- A Codex listener sets the initial code-execution cell yield and every
+  subsequent wait on that same cell to 86,400,000 milliseconds. While the inbox
+  is empty and the cell's `wait_for_messages` call remains in flight, the
+  harness must not return a still-running cell result before 86,400,000
+  milliseconds have elapsed from the initial `exec` or preceding cell `wait`.
+  Message delivery, the MCP tool deadline, cell completion or failure, and
+  explicit cancellation are completion events rather than idle harness yields
+  and are recorded separately.
 - Codex must configure the `agent_relay` MCP server with
   `tool_timeout_sec = 86400`. This client-side deadline ends an unchanged wait
   after 24 hours; it does not remove or acknowledge a relay message. The parent
@@ -410,14 +418,18 @@ hold:
   notice containing the Relay message ID but none of its actionable content.
   A sender with no known recovery address sends nothing through tmux and
   reports the message as queued with active wake-up unverified.
-- In an ordinary Codex session configured with
-  `tool_timeout_sec = 86400`, a cheaper-model background listener remains
-  blocked while its inbox is empty for up to 24 hours. The parent remains in
-  its collaboration wait, accepts a second user prompt during that wait, and
-  handles the exact relay message after the listener completes without
-  terminal-based message injection or a client-control API. If the 24-hour
-  client deadline expires first, the parent reports the timeout and starts one
-  replacement listener without acknowledging any message.
+- In an ordinary Codex session configured with `tool_timeout_sec = 86400`, a
+  cheaper-model background listener opens its execution cell with
+  `// @exec: {"yield_time_ms": 86400000}` and passes
+  `yield_time_ms = 86400000` to every harness wait on that cell. With the inbox
+  empty and the MCP call still in flight, no still-running cell result reaches
+  the model before that interval; a return at the approximately 31-second
+  default fails this criterion. A relay message may complete the cell sooner.
+  The parent remains in its collaboration wait, accepts a second user prompt
+  during that wait, and handles the exact relay message after the listener
+  completes without terminal-based message injection or a client-control API.
+  If the 24-hour client deadline expires first, the parent reports the timeout
+  and starts one replacement listener without acknowledging any message.
 - In an ordinary OpenCode session with background tasks enabled, a listener
   using the session's current model remains blocked while its inbox is empty,
   completes after a relay message arrives, and starts the parent handling turn

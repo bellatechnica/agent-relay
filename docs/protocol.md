@@ -226,7 +226,14 @@ reports the timeout and starts exactly one replacement listener. A message that
 commits after cancellation and before replacement remains pending and returns
 as soon as the replacement wait begins. The 24-hour deadline therefore bounds
 the open client request and the session state held open around it without
-discarding message content or turning the server into a polling loop.
+discarding message content or turning the server into a polling loop. It does
+not bound what a client costs to hold that call open. In the
+code-execution-cell path observed on Codex CLI 0.153.3 and used by one 0.156.1
+listener, the harness can return an unfinished cell while the relay call
+remains blocked, and each such return causes another model sampling pass. The
+cell and harness-wait yields govern those unfinished-cell returns; the
+`agent-relay-message` skill gives the operational values and their dated
+evidence.
 
 Claude Code clients configure the same server with a per-server
 `timeout = 86400000` milliseconds, because that client otherwise aborts a call
