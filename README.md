@@ -1,7 +1,65 @@
 # Agent Relay
 
-Run this service when coding-agent sessions need a durable, two-way mailbox on
-the same host or across a Docker Sandbox boundary. Each session receives a relay
+Direct messaging between local coding-agent sessions. Codex, Claude Code,
+OpenCode, Antigravity CLI, or any other client that speaks the Model Context
+Protocol (MCP) registers under a readable name (a slug) and can then send,
+receive, and reply to messages addressed to other sessions by that name.
+Messages are stored until the recipient acknowledges them, so nothing is lost
+when a session is busy, restarts, or is not listening yet. When a recipient
+is not listening and it runs in a tmux pane the sender can reach, the sender
+also types a short wake-up notice into that pane; the message itself stays in
+the relay.
+
+Typical uses: handing a work item to a new parallel session and getting its
+questions and completion report back, a reviewer session and an implementing
+session exchanging verdicts, or agents from different vendors coordinating on
+one repository.
+
+## How it differs from other agent coordination
+
+Observed as of September 2026.
+
+- **Subagents** (in Claude Code, Codex, or OpenCode) belong to one parent session. They start for a single task, report only to
+  that parent, end when they return, and you cannot talk to them directly.
+  Relay participants are ordinary, independent sessions: each keeps its own
+  lifetime and context, you can talk to any of them, and none commands another.
+  A message is a request the recipient handles in its own session, from any
+  vendor to any vendor.
+- **[Grok Bot](https://x.ai/bot/guides/grok-bot-for-engineering)** is xAI's
+  hosted assistant that launches, monitors, and sends follow-ups to Cursor
+  cloud agents (on Cursor's cloud or on Cursor-registered private worker
+  machines). Coordination runs from the bot to Cursor-managed agents. Agent
+  Relay has no hosted component and connects sessions you already run on your
+  own machine, whatever client they use.
+- **[Superset](https://superset.sh)** is a workspace application for running
+  many coding agents in parallel: a desktop app (macOS first) that gives each
+  agent a Git worktree and terminal, with a dashboard, scheduling, and remote
+  access. Per its own description, its agents do not message each other; you
+  orchestrate them from the dashboard. Agent Relay is one small Python service
+  with a SQLite file and adds only the messaging layer; it can run alongside a
+  tool like Superset rather than replacing it.
+
+### Possible integration with A2A and ACP
+
+Neither protocol is implemented; these are open directions.
+
+- **[A2A](https://a2a-protocol.org)** (Agent2Agent, Linux Foundation, which
+  also absorbed IBM's earlier Agent Communication Protocol) standardizes calls
+  between independently operated agent servers. The relay could publish each
+  registered slug as an A2A agent, mapping an incoming A2A message onto a relay
+  message, so A2A clients could reach local sessions. The mismatch to resolve is
+  that A2A models server-side tasks with their own lifecycle, while a relay
+  recipient is an interactive session that answers when it gets to the message.
+- **[ACP](https://agentclientprotocol.com)** (Agent Client Protocol, from Zed)
+  standardizes how an editor or other client starts and drives a coding agent.
+  It is client-to-agent, not agent-to-agent. A relay-side ACP client could
+  start agents and deliver wake-ups through ACP instead of tmux, for agents
+  that support it.
+
+## Architecture
+
+The relay is one HTTP service on the host, reachable from sessions on the same
+host or inside a Docker Sandbox. Each session receives a relay
 identity and communicates through HTTP or the Model Context Protocol (MCP).
 Sessions self-register human-readable slugs by default; deployments that need
 caller authentication can opt into bearer-token mode. Server-Sent Events (SSE)
@@ -17,6 +75,12 @@ agent A ── HTTP/MCP ──> host relay <── HTTP/MCP ── agent B
 The relay stores complete message bodies in SQLite. Reading a message records a
 delivery attempt; only an explicit acknowledgement removes it from subsequent
 inbox reads. A server restart therefore does not lose pending messages.
+
+Every send reports whether the recipient had a listener open at that moment.
+When it did not, a sender that knows the recipient's tmux pane and can reach
+that tmux server types a wake notice carrying only the message ID. Across a
+Docker Sandbox boundary, or without tmux, the message stays queued until the
+recipient next reads its inbox.
 
 ## Install and run
 
