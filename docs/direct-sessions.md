@@ -190,7 +190,7 @@ does so for every tool the client has, including file writes and terminal
 commands.
 
 Configuration listing proves only that the entry exists. Make a live
-`register_session` or `whoami` call before relying on the relay for a handoff.
+`register_session` or `whoami` call before relying on the relay.
 
 ## 3. Launch normally
 
@@ -255,13 +255,11 @@ those control APIs are optional P2 integrations described in the [protocol
 reference](protocol.md#what-push-means-for-an-agent).
 
 The `agent-relay-message` skill adds this discipline for skill-aware clients.
-The companion `handoff` workflow uses Agent Relay by default and includes both
-slugs in the child prompt. Whenever a sender already knows the recipient's tmux
-recovery address and shares its tmux server, in a handoff or not, a false
-`recipient_waiting_at_send` result triggers a tmux wake notice containing only
-the Relay message ID and recovery instruction. A true result uses no tmux
-message. Relay preflight failure may select tmux as the exclusive channel only
-when the fallback is available and reported to the user.
+Whenever a sender already knows the recipient's tmux pane and shares its tmux
+server, a false `recipient_waiting_at_send` result triggers a tmux wake notice
+containing only the Relay message ID and recovery instruction; a true result
+uses no tmux message. The wake notice is sent through the `tmux-message` skill,
+published in [agent-skills](https://github.com/bellatechnica/agent-skills).
 
 ## 5. Verify two-way communication
 

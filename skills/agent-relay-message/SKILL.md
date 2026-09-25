@@ -100,7 +100,9 @@ canonical wake notice without the ordinary tmux sender prefix:
     Relay message <UUID> is queued. Process the Relay inbox and restore exactly one listener.
 
 Resolve `scripts/send_tmux_wake.py` relative to this skill and
-`scripts/tmux_send.py` relative to the `tmux-message` skill, then invoke:
+`scripts/tmux_send.py` relative to the `tmux-message` skill (published in
+https://github.com/bellatechnica/agent-skills, not in this repository), then
+invoke:
 
     python3 <agent-relay-message-skill>/scripts/send_tmux_wake.py <tmux-send-script> <target> <UUID>
 

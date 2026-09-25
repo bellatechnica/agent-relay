@@ -192,6 +192,10 @@ slug's inbox, reply to a message, and acknowledge a processed message.
 
 ## Handoff integration
 
+The `handoff` and `tmux-message` skills are published in
+[agent-skills](https://github.com/bellatechnica/agent-skills), not in this
+repository; the requirements in this section bind those skills.
+
 The `handoff` skill must use Agent Relay as its default durable message channel.
 Tmux has two narrower roles: it may host the new local agent window, and it may
 wake a local recipient when a successful Relay send reports

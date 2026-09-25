@@ -142,7 +142,9 @@ the other participant's exact slug.
   the session-side rules: registering, reading and acknowledging the inbox,
   keeping one listener open per client, replying, and sending the tmux wake-up.
   Install it for skill-aware clients; for clients without it, the MCP tool
-  descriptions carry the essentials.
+  descriptions carry the essentials. The tmux wake-up also needs the
+  `tmux-message` skill, and the handoff workflow is the `handoff` skill; both
+  are in [agent-skills](https://github.com/bellatechnica/agent-skills).
 - [`examples/`](examples) holds ready MCP configurations for Claude Code,
   Codex, OpenCode, and Antigravity CLI. They address the relay as
   `host.docker.internal` for use inside a Docker Sandbox; on the host, use
