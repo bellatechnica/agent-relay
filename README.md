@@ -181,3 +181,7 @@ the other participant's exact slug.
 ```bash
 pytest
 ```
+
+## License
+
+Copyright 2026 Bella Technica. Licensed under the [Apache License 2.0](LICENSE).
